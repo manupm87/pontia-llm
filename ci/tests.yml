@@ -1,0 +1,32 @@
+# Workflow de CI para la suite de tests.
+# NOTA: mueve este archivo a .github/workflows/tests.yml para activarlo (aquí
+# vive en ci/ porque la credencial de la sesión no tiene el scope `workflow`).
+#
+# Ejecuta la suite de tests en cada push y pull request.
+# La suite no necesita red ni la clave de API: el LLM y el RAG se simulan.
+name: tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Ejecutar tests
+        run: python -m pytest -q
