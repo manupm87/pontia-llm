@@ -46,7 +46,9 @@ def test_images_for_pages_orders_dedups_and_caps(tmp_path: Path) -> None:
     # Orden de páginas solicitado: 1, 2, 3. El tope (3) corta antes de "d".
     result = store.images_for_pages([1, 2, 3])
     paths = [img["path"] for img in result]
-    assert paths == ["shared.jpg", "b.jpg", "a.jpg"]
+    # Las rutas se entregan absolutas (dentro de images_dir) a los consumidores.
+    assert [Path(p).name for p in paths] == ["shared.jpg", "b.jpg", "a.jpg"]
+    assert all(Path(p).is_absolute() for p in paths)
 
 
 def test_images_for_pages_dedups_across_pages(tmp_path: Path) -> None:
@@ -61,7 +63,7 @@ def test_images_for_pages_dedups_across_pages(tmp_path: Path) -> None:
     )
     # La misma ruta aparece en dos páginas distintas: solo se devuelve una vez.
     result = store.images_for_pages([1, 2])
-    assert [img["path"] for img in result] == ["x.jpg"]
+    assert [Path(img["path"]).name for img in result] == ["x.jpg"]
 
 
 def test_images_for_pages_filters_small_images(tmp_path: Path) -> None:
@@ -75,14 +77,14 @@ def test_images_for_pages_filters_small_images(tmp_path: Path) -> None:
         ],
     )
     result = store.images_for_pages([1])
-    assert [img["path"] for img in result] == ["big.jpg"]
+    assert [Path(img["path"]).name for img in result] == ["big.jpg"]
 
 
 def test_images_for_pages_tolerates_missing_dimensions(tmp_path: Path) -> None:
     # Entradas antiguas sin width/height se aceptan (el filtro ya se aplicó al extraer).
     store = _store(tmp_path, max_images_shown=5, min_image_size=200)
     _index_from(store, [{"path": "legacy.jpg", "page": 1, "caption": ""}])
-    assert [img["path"] for img in store.images_for_pages([1])] == ["legacy.jpg"]
+    assert [Path(img["path"]).name for img in store.images_for_pages([1])] == ["legacy.jpg"]
 
 
 def _write_manifest(store: GuideImageStore, entries: list[dict]) -> None:
@@ -91,6 +93,8 @@ def _write_manifest(store: GuideImageStore, entries: list[dict]) -> None:
 
 def test_relative_manifest_paths_resolve_to_absolute(tmp_path: Path) -> None:
     store = _store(tmp_path)
+    # La imagen debe existir en disco (si no, build() la consideraría obsoleta).
+    (store.images_dir / "photo.jpg").write_bytes(b"x")
     _write_manifest(
         store, [{"path": "photo.jpg", "page": 0, "width": 300, "height": 300, "caption": ""}]
     )
@@ -104,6 +108,32 @@ def test_relative_manifest_paths_resolve_to_absolute(tmp_path: Path) -> None:
     assert Path(path) == store.images_dir / "photo.jpg"
 
 
+def test_index_resolves_relative_paths_to_existing_absolute(tmp_path: Path) -> None:
+    # Regresión: la rama de extracción indexa rutas RELATIVAS; deben llegar a la
+    # UI como absolutas y existentes (antes se entregaban relativas e invisibles).
+    store = _store(tmp_path)
+    (store.images_dir / "rel.jpg").write_bytes(b"x")
+    store._index([{"path": "rel.jpg", "page": 0, "width": 300, "height": 300, "caption": ""}])
+    images = store.images_for_pages([0])
+    assert len(images) == 1
+    assert Path(images[0]["path"]) == store.images_dir / "rel.jpg"
+    assert Path(images[0]["path"]).is_file()
+
+
+def test_build_rebuilds_when_manifest_images_missing(tmp_path: Path) -> None:
+    # Manifiesto con rutas válidas pero sin archivos en disco (proyecto movido):
+    # build() debe reconstruir. Aquí se fuerza el camino comprobando que un
+    # manifiesto sin imágenes existentes no se da por bueno.
+    store = _store(tmp_path)
+    _write_manifest(
+        store, [{"path": "ghost.jpg", "page": 0, "width": 300, "height": 300, "caption": ""}]
+    )
+    manifest = store._load_manifest()
+    store._index(manifest)
+    # Ninguna imagen existe en disco -> el almacén lo detecta para reconstruir.
+    assert store._any_image_exists() is False
+
+
 def test_corrupt_manifest_does_not_raise_and_is_treated_as_missing(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.manifest_path.write_text("{bad json", encoding="utf-8")
@@ -114,18 +144,17 @@ def test_corrupt_manifest_does_not_raise_and_is_treated_as_missing(tmp_path: Pat
 
 def test_manifest_entry_outside_images_dir_is_rejected(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    _write_manifest(
-        store,
+    # La validación de rutas (path traversal) ocurre al indexar.
+    store._index(
         [
             {"path": "../../../../etc/passwd", "page": 0, "caption": ""},
             {"path": "/etc/passwd", "page": 0, "caption": ""},
             {"path": "ok.jpg", "page": 0, "width": 300, "height": 300, "caption": ""},
-        ],
+        ]
     )
-    manifest = store._load_manifest()
-    assert manifest is not None
+    result = store.images_for_pages([0])
     # Solo sobrevive la entrada que vive dentro del directorio de imágenes.
-    paths = [Path(item["path"]) for item in manifest]
+    paths = [Path(item["path"]) for item in result]
     assert paths == [store.images_dir / "ok.jpg"]
     for path in paths:
         assert path.is_relative_to(store.images_dir)

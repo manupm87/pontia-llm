@@ -58,16 +58,23 @@ class GuideImageStore:
         """Extrae las imágenes del PDF (o recarga el manifiesto existente).
 
         Si el manifiesto ya existe y ``force`` es ``False``, se intenta recargar
-        desde disco; si el manifiesto está corrupto, se reconstruye desde el PDF.
-        En caso contrario, recorre el PDF, guarda cada foto relevante y escribe
-        el manifiesto.
+        desde disco; si está corrupto —o sus rutas ya no apuntan a ninguna
+        imagen en disco (p. ej. el proyecto se movió)— se reconstruye desde el
+        PDF. En caso contrario, recorre el PDF, guarda cada foto y escribe el
+        manifiesto.
         """
         if self.manifest_path.exists() and not force:
             manifest = self._load_manifest()
-            # Si el manifiesto era ilegible (corrupto), se reconstruye.
             if manifest is not None:
                 self._index(manifest)
-                return
+                # Si no hay entradas, o al menos una imagen existe en disco, se
+                # reutiliza; si ninguna existe, el manifiesto está obsoleto y se
+                # reconstruye desde el PDF en lugar de quedarse sin fotos.
+                if not manifest or self._any_image_exists():
+                    return
+                logger.warning(
+                    "Las imágenes del manifiesto no están en disco; se reconstruyen."
+                )
 
         self.images_dir.mkdir(parents=True, exist_ok=True)
         manifest = self._extract_images()
@@ -153,10 +160,10 @@ class GuideImageStore:
         os.replace(tmp_path, self.manifest_path)
 
     def _load_manifest(self) -> list[dict] | None:
-        """Recarga el manifiesto persistido, validando cada ruta.
+        """Lee el manifiesto persistido (la resolución de rutas la hace ``_index``).
 
-        Devuelve la lista de entradas (con ``path`` ya resuelto a absoluto) o
-        ``None`` si el manifiesto es ilegible/corrupto, de forma que la app lo
+        Devuelve la lista de entradas en crudo, o ``None`` si el manifiesto es
+        ilegible/corrupto o tiene una forma inesperada, de forma que ``build`` lo
         reconstruya desde el PDF en lugar de fallar al arrancar.
         """
         try:
@@ -173,14 +180,7 @@ class GuideImageStore:
             logger.warning("Manifiesto de imágenes con formato inesperado; se reconstruirá.")
             return None
 
-        manifest: list[dict] = []
-        for entry in raw:
-            resolved = self._safe_resolve(entry.get("path"))
-            if resolved is None:
-                continue
-            # Se entrega a los consumidores una ruta absoluta y renderizable.
-            manifest.append({**entry, "path": str(resolved)})
-        return manifest
+        return raw
 
     def _safe_resolve(self, stored_path: str | None) -> Path | None:
         """Resuelve una ruta del manifiesto y valida que viva dentro de ``images_dir``.
@@ -205,10 +205,31 @@ class GuideImageStore:
         return resolved
 
     def _index(self, manifest: list[dict]) -> None:
-        """Construye el mapa ``página -> [fotos]`` a partir del manifiesto."""
+        """Construye el mapa ``página -> [fotos]`` resolviendo y validando rutas.
+
+        Cada ``path`` (relativo si viene de una extracción recién hecha, o
+        absoluto si procede de un manifiesto antiguo) se resuelve a absoluto y se
+        valida que viva dentro de ``images_dir``. Así los consumidores reciben
+        SIEMPRE una ruta absoluta y renderizable, sea cual sea el origen del
+        manifiesto (esto evita que la UI reciba rutas relativas y no encuentre
+        las fotos).
+        """
         self._by_page = {}
         for item in manifest:
-            self._by_page.setdefault(item["page"], []).append(item)
+            resolved = self._safe_resolve(item.get("path"))
+            if resolved is None:
+                continue
+            self._by_page.setdefault(item["page"], []).append(
+                {**item, "path": str(resolved)}
+            )
+
+    def _any_image_exists(self) -> bool:
+        """Indica si alguna imagen indexada existe realmente en disco."""
+        return any(
+            Path(item["path"]).is_file()
+            for items in self._by_page.values()
+            for item in items
+        )
 
 
 def _passes_size_filter(item: dict, min_size: int) -> bool:
