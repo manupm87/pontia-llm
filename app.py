@@ -152,21 +152,18 @@ def render_sources(sources: list[dict]) -> None:
 
 
 def render_images(images: list[dict]) -> None:
-    """Muestra las fotos de los lugares recuperados como una galería en columnas."""
+    """Muestra las fotos de los lugares recuperados, en línea con la respuesta."""
     if not images:
         return
     # Solo se muestran las fotos cuyo archivo sigue existiendo en disco.
     available = [img for img in images if Path(img.get("path", "")).is_file()]
     if not available:
         return
-    with st.expander("🖼️ Fotos de la guía", expanded=True):
-        columns = st.columns(min(len(available), 3))
-        for index, img in enumerate(available):
-            page = img.get("page")
-            page_label = page + 1 if isinstance(page, int) else "?"
-            caption = img.get("caption") or "Foto de la guía"
-            with columns[index % len(columns)]:
-                st.image(img["path"], caption=f"{caption} (pág. {page_label})")
+    columns = st.columns(min(len(available), 3))
+    for index, img in enumerate(available):
+        caption = img.get("caption") or ""
+        with columns[index % len(columns)]:
+            st.image(img["path"], caption=caption, use_container_width=True)
 
 
 def render_example_buttons(prefix: str, columns: int = 1) -> None:
@@ -272,9 +269,9 @@ def render_history(messages: list[dict]) -> None:
         with st.chat_message(message["role"]):
             render_reasoning(message.get("reasoning", ""))
             st.write(message["content"])
-            render_tools(message.get("tool_calls", []))
-            render_sources(message.get("sources", []))
             render_images(message.get("images", []))
+            render_sources(message.get("sources", []))
+            render_tools(message.get("tool_calls", []))
 
 
 def handle_turn(assistant: TouristAssistant, prompt: str, streaming: bool) -> None:
@@ -308,9 +305,9 @@ def handle_turn(assistant: TouristAssistant, prompt: str, streaming: bool) -> No
             return
 
         tool_calls = records_to_dicts(turn.tool_calls)
-        render_tools(tool_calls)
-        render_sources(turn.sources)
         render_images(turn.images)
+        render_sources(turn.sources)
+        render_tools(tool_calls)
 
     st.session_state["messages"].append(
         {
