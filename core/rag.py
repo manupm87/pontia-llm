@@ -127,5 +127,7 @@ def _doc_to_source(doc: Document) -> dict:
         "source_name": doc.metadata.get("source_name", "?"),
         "page": page,
         "chunk_id": doc.metadata.get("chunk_id", "?"),
-        "snippet": doc.page_content[:160],
+        # Fragmento completo recuperado (lo mismo que lee el modelo), para poder
+        # auditar el *grounding* desde la interfaz.
+        "snippet": doc.page_content,
     }

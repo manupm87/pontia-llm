@@ -73,6 +73,47 @@ def build_system_prompt(today: date | None = None) -> str:
 # compatibilidad con el notebook. El asistente lo reconstruye en cada sesión.
 SYSTEM_PROMPT = build_system_prompt()
 
+# Claves que, en los bloques de contenido de Gemini, marcan un fragmento de
+# razonamiento ("thinking") en lugar de respuesta.
+_THOUGHT_TYPES = {"thinking", "reasoning", "thought"}
+
+
+def _split_content(chunk) -> list[tuple[bool, str]]:
+    """Separa un *chunk* de streaming en fragmentos ``(is_thought, text)``.
+
+    Tolera las distintas formas en que el SDK puede entregar el contenido
+    (cadena simple, lista de bloques con tipo, o razonamiento en
+    ``additional_kwargs``); si no detecta razonamiento, todo es respuesta.
+    """
+    out: list[tuple[bool, str]] = []
+
+    # Algunos proveedores entregan el razonamiento aparte del contenido.
+    reasoning = getattr(chunk, "additional_kwargs", {}).get("reasoning_content")
+    if reasoning:
+        out.append((True, str(reasoning)))
+
+    content = getattr(chunk, "content", "")
+    if isinstance(content, str):
+        if content:
+            out.append((False, content))
+        return out
+
+    for block in content or []:
+        if isinstance(block, str):
+            if block:
+                out.append((False, block))
+        elif isinstance(block, dict):
+            is_thought = block.get("type") in _THOUGHT_TYPES or bool(block.get("thought"))
+            text = (
+                block.get("thinking")
+                or block.get("reasoning")
+                or block.get("text")
+                or ""
+            )
+            if text:
+                out.append((is_thought, text))
+    return out
+
 
 @dataclass
 class ToolCallRecord:
@@ -126,16 +167,37 @@ class TouristAssistant:
 
     @staticmethod
     def _build_llm(settings: Settings):
-        """Crea el modelo de Gemini (import perezoso para no exigir ``langchain``)."""
+        """Crea el modelo de Gemini (import perezoso para no exigir ``langchain``).
+
+        Si ``thinking_budget`` lo permite, activa el "thinking" de Gemini con
+        resúmenes de razonamiento. Si la versión del SDK no admite esos
+        parámetros, se reintenta sin ellos para no romper el arranque.
+        """
         from langchain.chat_models import init_chat_model
 
-        return init_chat_model(
-            settings.generation_model,
+        common = dict(
             model_provider="google_genai",
             temperature=settings.temperature,
             top_p=settings.top_p,
             max_tokens=settings.max_output_tokens,
         )
+        # Intenta activar el "thinking" con resúmenes; los nombres de parámetros
+        # varían entre versiones del SDK, así que se prueban en cascada y, como
+        # último recurso, se arranca sin razonamiento.
+        attempts = []
+        if settings.thinking_budget != 0:
+            attempts.append(
+                dict(thinking_budget=settings.thinking_budget, include_thoughts=True)
+            )
+            attempts.append(dict(thinking_budget=settings.thinking_budget))
+        attempts.append({})
+        for extra in attempts:
+            try:
+                return init_chat_model(settings.generation_model, **common, **extra)
+            except Exception as exc:  # noqa: BLE001 - prueba la siguiente combinación
+                logger.warning("init_chat_model falló con %s (%s); reintentando.", extra, exc)
+        # Si todo falla, propaga el último error construyendo sin extras.
+        return init_chat_model(settings.generation_model, **common)
 
     def prepare(self, user_message: str, max_tool_rounds: int = 5) -> TurnContext:
         """Resuelve las rondas de *tool calling* y deja el turno listo para responder.
@@ -168,21 +230,34 @@ class TouristAssistant:
             final=final,
         )
 
-    def stream_answer(self, turn: TurnContext) -> Iterator[str]:
-        """Emite la respuesta final token a token y la persiste en el historial.
+    def stream_reasoning_and_answer(
+        self, turn: TurnContext
+    ) -> Iterator[tuple[bool, str]]:
+        """Emite el razonamiento y la respuesta en *streaming*.
 
-        Usa el LLM SIN herramientas para forzar la generación de texto en lugar
-        de nuevas llamadas a tools. Solo el turno conversacional persiste.
+        Genera tuplas ``(is_thought, text)``: ``True`` para los fragmentos de
+        razonamiento ("thinking" de Gemini) y ``False`` para la respuesta. Solo
+        la respuesta (sin el razonamiento) se persiste en el historial.
         """
-        pieces: list[str] = []
+        answer: list[str] = []
         for chunk in self.llm.stream(turn.working):
-            text = chunk.content
-            if text:
-                pieces.append(text)
-                yield text
+            for is_thought, text in _split_content(chunk):
+                if not is_thought:
+                    answer.append(text)
+                yield is_thought, text
 
-        self.history.append(AIMessage(content="".join(pieces)))
+        self.history.append(AIMessage(content="".join(answer)))
         self._trim_history()
+
+    def stream_answer(self, turn: TurnContext) -> Iterator[str]:
+        """Emite solo la respuesta final token a token (sin el razonamiento).
+
+        Se conserva por compatibilidad (notebook). Usa el LLM SIN herramientas
+        para forzar la generación de texto en lugar de nuevas llamadas a tools.
+        """
+        for is_thought, text in self.stream_reasoning_and_answer(turn):
+            if not is_thought:
+                yield text
 
     def stream(self, user_message: str, max_tool_rounds: int = 5) -> Iterator[str]:
         """Resuelve las herramientas y emite la respuesta final token a token."""

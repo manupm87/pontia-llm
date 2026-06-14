@@ -39,12 +39,15 @@ class Settings:
     temperature: float = 0.2
     top_p: float = 0.95
     max_output_tokens: int = 1024
+    # Presupuesto de "thinking" de Gemini para mostrar el razonamiento en vivo
+    # (0 = desactivado, -1 = dinámico). Configurable con THINKING_BUDGET.
+    thinking_budget: int = 1024
     pdf_path: Path = DEFAULT_PDF_PATH
     index_dir: Path = DEFAULT_INDEX_DIR
     images_dir: Path = DEFAULT_IMAGES_DIR
-    chunk_size: int = 1000
-    chunk_overlap: int = 150
-    top_k: int = 4
+    chunk_size: int = 500
+    chunk_overlap: int = 100
+    top_k: int = 5
     max_history_messages: int = 12
     request_timeout: float = 45.0
     # Imágenes de la guía: tamaño mínimo (px) para descartar decoraciones y
@@ -64,7 +67,8 @@ def load_settings() -> Settings:
     Lee el archivo ``.env`` mediante ``load_dotenv`` y construye un objeto
     ``Settings``. Toma del entorno la clave de API y los parámetros del
     modelo (``GENERATION_MODEL``, ``EMBEDDING_MODEL``, ``TEMPERATURE``,
-    ``TOP_P``, ``MAX_OUTPUT_TOKENS``); el resto de campos usa sus defaults.
+    ``TOP_P``, ``MAX_OUTPUT_TOKENS``, ``THINKING_BUDGET``); el resto de campos
+    usa sus defaults.
 
     Nota: ``load_dotenv`` deja ``GOOGLE_API_KEY`` en el entorno para que
     ``langchain-google-genai`` la detecte automáticamente.
@@ -78,4 +82,5 @@ def load_settings() -> Settings:
         temperature=float(os.getenv("TEMPERATURE", "0.2")),
         top_p=float(os.getenv("TOP_P", "0.95")),
         max_output_tokens=int(os.getenv("MAX_OUTPUT_TOKENS", "1024")),
+        thinking_budget=int(os.getenv("THINKING_BUDGET", "1024")),
     )

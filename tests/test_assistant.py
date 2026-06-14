@@ -21,7 +21,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from core.assistant import TouristAssistant, build_system_prompt
+from core.assistant import TouristAssistant, _split_content, build_system_prompt
 from core.config import Settings
 
 
@@ -60,7 +60,7 @@ class _FakeLLM:
 
     def stream(self, messages):  # noqa: ANN001
         for piece in self._stream_chunks:
-            yield AIMessageChunk(content=piece)
+            yield piece if isinstance(piece, AIMessageChunk) else AIMessageChunk(content=piece)
 
 
 def _build_assistant(invoke_script, stream_chunks) -> TouristAssistant:
@@ -158,6 +158,34 @@ def test_discard_last_user_turn_removes_dangling_human() -> None:
         isinstance(m, HumanMessage) and m.content == "pregunta sin responder"
         for m in assistant.history
     )
+
+
+def test_split_content_variants() -> None:
+    assert _split_content(AIMessageChunk(content="hola")) == [(False, "hola")]
+    assert _split_content(AIMessageChunk(content=[{"type": "thinking", "thinking": "t"}])) == [
+        (True, "t")
+    ]
+    assert _split_content(AIMessageChunk(content=[{"type": "text", "text": "a"}])) == [(False, "a")]
+    chunk = AIMessageChunk(content="", additional_kwargs={"reasoning_content": "r"})
+    assert (True, "r") in _split_content(chunk)
+
+
+def test_stream_separates_thoughts_from_answer() -> None:
+    chunks = [
+        AIMessageChunk(content=[{"type": "thinking", "thinking": "Pienso. "}]),
+        AIMessageChunk(content="Respuesta "),
+        AIMessageChunk(content="final."),
+    ]
+    assistant = _build_assistant(invoke_script=[AIMessage(content="")], stream_chunks=chunks)
+    turn = assistant.prepare("hola")
+    events = list(assistant.stream_reasoning_and_answer(turn))
+
+    assert (True, "Pienso. ") in events
+    answer = "".join(text for is_thought, text in events if not is_thought)
+    assert answer == "Respuesta final."
+    # Solo la respuesta (no el razonamiento) persiste en la memoria.
+    ais = [m for m in assistant.history if isinstance(m, AIMessage)]
+    assert ais[-1].content == "Respuesta final."
 
 
 def test_reset_clears_history_and_citations() -> None:

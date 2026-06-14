@@ -102,6 +102,39 @@ def render_tools(tool_calls: list[dict]) -> None:
             st.markdown(f"{icon} **{label}** — `{arg}` ({call['elapsed_s']:.2f}s)")
 
 
+def render_reasoning(reasoning: str) -> None:
+    """Muestra el razonamiento del modelo en un desplegable (colapsado)."""
+    if not reasoning:
+        return
+    with st.expander("🧠 Razonamiento del modelo"):
+        st.markdown(reasoning)
+
+
+def stream_with_reasoning(assistant: TouristAssistant, turn) -> tuple[str, str]:
+    """Emite razonamiento y respuesta en vivo; devuelve ``(respuesta, razonamiento)``.
+
+    El razonamiento se va mostrando en directo y, al terminar, se reemplaza por
+    un desplegable colapsado encima de la respuesta.
+    """
+    reasoning_slot = st.empty()
+    answer_slot = st.empty()
+    thoughts: list[str] = []
+    answer: list[str] = []
+    for is_thought, text in assistant.stream_reasoning_and_answer(turn):
+        if is_thought:
+            thoughts.append(text)
+            reasoning_slot.markdown("🧠 *Razonando…*\n\n" + "".join(thoughts))
+        else:
+            answer.append(text)
+            answer_slot.markdown("".join(answer))
+
+    reasoning = "".join(thoughts)
+    if reasoning:  # Sustituye el razonamiento "en vivo" por un desplegable.
+        with reasoning_slot.container():
+            render_reasoning(reasoning)
+    return "".join(answer), reasoning
+
+
 def render_sources(sources: list[dict]) -> None:
     """Muestra las fuentes citadas dentro de un desplegable."""
     if not sources:
@@ -111,9 +144,10 @@ def render_sources(sources: list[dict]) -> None:
             page = source.get("page")
             page_label = page + 1 if isinstance(page, int) else "?"
             st.markdown(f"**{i}. {source.get('source_name', '?')}** — página {page_label}")
-            snippet = source.get("snippet")
-            if snippet:
-                st.caption(snippet)
+            text = source.get("snippet")
+            if text:
+                # Fragmento completo recuperado, como cita en bloque.
+                st.markdown("> " + text.replace("\n", "\n> "))
 
 
 def render_images(images: list[dict]) -> None:
@@ -206,6 +240,7 @@ def render_history(messages: list[dict]) -> None:
     """Redibuja el historial visible de la conversación."""
     for message in messages:
         with st.chat_message(message["role"]):
+            render_reasoning(message.get("reasoning", ""))
             st.write(message["content"])
             render_tools(message.get("tool_calls", []))
             render_sources(message.get("sources", []))
@@ -222,12 +257,13 @@ def handle_turn(assistant: TouristAssistant, prompt: str) -> None:
 
     with st.chat_message("assistant"):
         try:
+            # Fase 1: resolución de herramientas, con su actividad en el status.
             with st.status("🧭 Consultando la guía y los datos…", expanded=True) as status:
                 turn = assistant.prepare(prompt)
                 render_tool_activity(turn.tool_calls, status)
-                status.update(label="✍️ Redactando respuesta…", state="running")
-                answer = st.write_stream(assistant.stream_answer(turn))
-                status.update(label="✅ Respuesta lista", state="complete", expanded=False)
+                status.update(label="✅ Datos listos", state="complete", expanded=False)
+            # Fase 2: razonamiento + respuesta en streaming, en el cuerpo del chat.
+            answer, reasoning = stream_with_reasoning(assistant, turn)
         except Exception as exc:  # noqa: BLE001 - mostrar el fallo sin romper la app
             st.error(f"No he podido completar la respuesta: {exc}")
             # Deshace el turno a medias para no corromper los siguientes.
@@ -244,6 +280,7 @@ def handle_turn(assistant: TouristAssistant, prompt: str) -> None:
         {
             "role": "assistant",
             "content": answer,
+            "reasoning": reasoning,
             "sources": turn.sources,
             "images": turn.images,
             "tool_calls": tool_calls,

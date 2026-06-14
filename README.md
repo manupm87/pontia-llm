@@ -21,8 +21,11 @@ capacidades:
   herramientas de tiempo y mar. El prompt de sistema se ancla a la fecha actual.
 - **Diálogo multiturno**: mantiene el contexto de la conversación para resolver
   preguntas encadenadas.
+- **Razonamiento en streaming**: si el modelo lo admite, muestra el
+  razonamiento ("thinking" de Gemini) y la respuesta en *streaming* en vivo.
 - **Interfaz cuidada**: tema visual propio (CSS dinámico), ejemplos clicables,
-  actividad de las herramientas en vivo, galería de fotos y exportación del chat.
+  actividad de las herramientas en vivo, fuentes con el fragmento completo
+  citado, galería de fotos y exportación del chat.
 
 El asistente está construido sobre **Google Gemini** orquestado con
 **LangChain**, usa un **vector store FAISS** para la búsqueda semántica y
@@ -189,11 +192,12 @@ Estos parámetros pueden ajustarse mediante variables de entorno (por ejemplo en
 | `TEMPERATURE`        | `0.2`                          | Temperatura de muestreo              |
 | `TOP_P`              | `0.95`                         | Núcleo de probabilidad (top-p)       |
 | `MAX_OUTPUT_TOKENS`  | `1024`                         | Límite de tokens de la respuesta     |
+| `THINKING_BUDGET`    | `1024`                         | Presupuesto de razonamiento de Gemini (0 = off, -1 = dinámico) |
 
-El resto de parámetros (tamaño de troceado, solapamiento, `top_k` de
-recuperación, longitud máxima del historial, rutas del PDF y del índice, tamaño
-mínimo de imagen y número máximo de fotos por respuesta) se definen en
-`core/config.py` mediante la clase `Settings`.
+El resto de parámetros (tamaño de troceado `chunk_size=500`, solapamiento
+`chunk_overlap=100`, `top_k=5` de recuperación, longitud máxima del historial,
+rutas del PDF y del índice, tamaño mínimo de imagen y número máximo de fotos por
+respuesta) se definen en `core/config.py` mediante la clase `Settings`.
 
 ## Índice FAISS e imágenes
 
