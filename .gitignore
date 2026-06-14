@@ -17,6 +17,7 @@ index/
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
+.pytest_cache/
 
 # Entornos virtuales
 .venv/

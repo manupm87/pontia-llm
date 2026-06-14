@@ -1,47 +1,105 @@
 """Aplicación Streamlit del asistente turístico de Tenerife.
 
 Interfaz de chat conversacional que combina RAG sobre la guía oficial
-(TENERIFE.pdf), diálogo multiturno y la function call ``get_weather``.
-La respuesta se muestra en streaming y se acompaña de las fuentes citadas y de
-las fotos de los lugares recuperados de la guía.
+(TENERIFE.pdf), diálogo multiturno y las function calls de tiempo y estado del
+mar. La respuesta se muestra en streaming, con la actividad de las herramientas
+en vivo, las fuentes citadas y las fotos de los lugares recuperados de la guía.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
-from core.config import load_settings
+from core.config import Settings, load_settings
 from core.rag import TouristGuideRAG
-from core.assistant import TouristAssistant
+from core.assistant import TouristAssistant, ToolCallRecord
+from ui_theme import inject_styles, render_hero
 
-# Ejemplos de preguntas que se ofrecen al usuario en la barra lateral.
+# Ejemplos de preguntas que se ofrecen al usuario (clicables).
 EXAMPLE_QUESTIONS = [
     "¿Qué playas me recomiendas en el sur de Tenerife?",
     "¿Cómo subir al Teide y qué necesito?",
-    "¿Qué tiempo hará el 2026-06-20?",
+    "¿Qué tiempo hará este finde?",
+    "¿Está el mar para bañarse mañana?",
     "Recomiéndame platos típicos de la gastronomía canaria.",
     "¿Qué puedo visitar en La Laguna?",
 ]
 
+# Etiquetas legibles para cada herramienta en el panel de actividad.
+_TOOL_LABELS = {
+    "search_tourist_guide": "📚 Búsqueda en la guía",
+    "get_weather": "🌤️ Previsión del tiempo",
+    "get_sea_conditions": "🌊 Estado del mar",
+    "resolve_date": "📅 Resolución de fecha",
+}
 
-def get_settings():
+
+def get_settings() -> Settings:
     """Carga la configuración del proyecto desde el entorno (.env)."""
     return load_settings()
 
 
 @st.cache_resource(show_spinner=False)
-def get_rag(_settings) -> TouristGuideRAG:
-    """Construye (o carga) el índice FAISS una sola vez por sesión de servidor.
-
-    Se usa ``cache_resource`` porque el RAG no tiene estado mutable propio
-    de la conversación: solo el índice vectorial, que se reutiliza.
-    """
+def get_rag(_settings: Settings) -> TouristGuideRAG:
+    """Construye (o carga) el índice FAISS una sola vez por sesión de servidor."""
     with st.spinner("Indexando la guía..."):
         rag = TouristGuideRAG(_settings)
         rag.build_index()
     return rag
+
+
+def get_assistant(
+    settings: Settings, rag: TouristGuideRAG, params: tuple[float, float, int]
+) -> TouristAssistant:
+    """Devuelve el asistente, reconstruyéndolo si cambian los parámetros del modelo.
+
+    Reconstruir solo el modelo (no el RAG) permite ajustar la generación en vivo
+    conservando el historial de la conversación.
+    """
+    temperature, top_p, max_tokens = params
+    if (
+        "assistant" not in st.session_state
+        or st.session_state.get("assistant_params") != params
+    ):
+        tuned = replace(
+            settings,
+            temperature=temperature,
+            top_p=top_p,
+            max_output_tokens=max_tokens,
+        )
+        previous = st.session_state.get("assistant")
+        assistant = TouristAssistant(tuned, rag)
+        if previous is not None:  # Conserva el historial al reajustar parámetros.
+            assistant.history = previous.history
+            assistant.tool_log = previous.tool_log
+        st.session_state["assistant"] = assistant
+        st.session_state["assistant_params"] = params
+    return st.session_state["assistant"]
+
+
+def render_tool_activity(records: list[ToolCallRecord], container) -> None:
+    """Escribe en vivo (dentro del ``st.status``) las herramientas ejecutadas."""
+    for record in records:
+        label = _TOOL_LABELS.get(record.name, record.name)
+        icon = "✅" if record.ok else "⚠️"
+        arg = next(iter(record.arguments.values()), "")
+        container.write(f"{icon} {label} · `{arg}` · {record.elapsed_s:.2f}s")
+
+
+def render_tools(tool_calls: list[dict]) -> None:
+    """Muestra las herramientas usadas en la respuesta dentro de un desplegable."""
+    if not tool_calls:
+        return
+    with st.expander("🔧 Herramientas usadas"):
+        for call in tool_calls:
+            label = _TOOL_LABELS.get(call["name"], call["name"])
+            icon = "✅" if call["ok"] else "⚠️"
+            arg = next(iter(call["arguments"].values()), "")
+            st.markdown(f"{icon} **{label}** — `{arg}` ({call['elapsed_s']:.2f}s)")
 
 
 def render_sources(sources: list[dict]) -> None:
@@ -52,16 +110,14 @@ def render_sources(sources: list[dict]) -> None:
         for i, source in enumerate(sources, start=1):
             page = source.get("page")
             page_label = page + 1 if isinstance(page, int) else "?"
-            st.markdown(
-                f"**{i}. {source.get('source_name', '?')}** — página {page_label}"
-            )
+            st.markdown(f"**{i}. {source.get('source_name', '?')}** — página {page_label}")
             snippet = source.get("snippet")
             if snippet:
                 st.caption(snippet)
 
 
 def render_images(images: list[dict]) -> None:
-    """Muestra las fotos de los lugares recuperados de la guía."""
+    """Muestra las fotos de los lugares recuperados como una galería en columnas."""
     if not images:
         return
     # Solo se muestran las fotos cuyo archivo sigue existiendo en disco.
@@ -69,25 +125,137 @@ def render_images(images: list[dict]) -> None:
     if not available:
         return
     with st.expander("🖼️ Fotos de la guía", expanded=True):
-        for img in available:
+        columns = st.columns(min(len(available), 3))
+        for index, img in enumerate(available):
             page = img.get("page")
             page_label = page + 1 if isinstance(page, int) else "?"
             caption = img.get("caption") or "Foto de la guía"
-            st.image(img["path"], caption=f"{caption} (página {page_label})")
+            with columns[index % len(columns)]:
+                st.image(img["path"], caption=f"{caption} (pág. {page_label})")
+
+
+def render_example_buttons(prefix: str, columns: int = 1) -> None:
+    """Dibuja los ejemplos como botones que lanzan la pregunta al pulsarlos."""
+    cols = st.columns(columns) if columns > 1 else None
+    for index, question in enumerate(EXAMPLE_QUESTIONS):
+        target = cols[index % columns] if cols else st
+        if target.button(question, key=f"{prefix}_{index}"):
+            st.session_state["pending_prompt"] = question
+            st.rerun()
+
+
+def records_to_dicts(records: list[ToolCallRecord]) -> list[dict]:
+    """Serializa los registros de herramienta para guardarlos en el historial visible."""
+    return [
+        {
+            "name": r.name,
+            "arguments": dict(r.arguments),
+            "ok": r.ok,
+            "elapsed_s": r.elapsed_s,
+        }
+        for r in records
+    ]
+
+
+def conversation_markdown(messages: list[dict]) -> str:
+    """Construye un Markdown descargable con la conversación."""
+    lines = ["# Conversación con el asistente turístico de Tenerife", ""]
+    for message in messages:
+        who = "🧑 Tú" if message["role"] == "user" else "🌴 Asistente"
+        lines.append(f"**{who}:** {message['content']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def render_sidebar(settings: Settings) -> tuple[float, float, int]:
+    """Dibuja la barra lateral (parámetros, acciones, ejemplos) y devuelve los params."""
+    with st.sidebar:
+        st.header("⚙️ Parámetros del modelo")
+        st.caption(f"Modelo: `{settings.generation_model}`")
+        temperature = st.slider("Temperature", 0.0, 1.0, settings.temperature, 0.05)
+        top_p = st.slider("Top-p", 0.0, 1.0, settings.top_p, 0.05)
+        max_tokens = st.slider(
+            "Máx. tokens de salida", 256, 4096, settings.max_output_tokens, 128
+        )
+
+        st.divider()
+        if st.button("🔄 Reiniciar conversación"):
+            st.session_state["messages"] = []
+            st.session_state.pop("pending_prompt", None)
+            if "assistant" in st.session_state:
+                st.session_state["assistant"].reset()
+            st.rerun()
+
+        messages = st.session_state.get("messages", [])
+        st.download_button(
+            "⬇️ Exportar conversación",
+            data=conversation_markdown(messages),
+            file_name=f"conversacion_tenerife_{datetime.now():%Y%m%d_%H%M}.md",
+            mime="text/markdown",
+            disabled=not messages,
+        )
+
+        st.divider()
+        st.subheader("💡 Ejemplos")
+        render_example_buttons("ex_side")
+
+    return temperature, top_p, max_tokens
+
+
+def render_history(messages: list[dict]) -> None:
+    """Redibuja el historial visible de la conversación."""
+    for message in messages:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+            render_tools(message.get("tool_calls", []))
+            render_sources(message.get("sources", []))
+            render_images(message.get("images", []))
+
+
+def handle_turn(assistant: TouristAssistant, prompt: str) -> None:
+    """Procesa un turno: muestra la actividad de herramientas y responde en streaming."""
+    st.session_state["messages"].append(
+        {"role": "user", "content": prompt, "sources": [], "images": [], "tool_calls": []}
+    )
+    with st.chat_message("user"):
+        st.write(prompt)
+
+    with st.chat_message("assistant"):
+        try:
+            with st.status("🧭 Consultando la guía y los datos…", expanded=True) as status:
+                turn = assistant.prepare(prompt)
+                render_tool_activity(turn.tool_calls, status)
+                status.update(label="✍️ Redactando respuesta…", state="running")
+                answer = st.write_stream(assistant.stream_answer(turn))
+                status.update(label="✅ Respuesta lista", state="complete", expanded=False)
+        except Exception as exc:  # noqa: BLE001 - mostrar el fallo sin romper la app
+            st.error(f"No he podido completar la respuesta: {exc}")
+            # Deshace el turno a medias para no corromper los siguientes.
+            assistant.discard_last_user_turn()
+            st.session_state["messages"].pop()
+            return
+
+        tool_calls = records_to_dicts(turn.tool_calls)
+        render_tools(tool_calls)
+        render_sources(turn.sources)
+        render_images(turn.images)
+
+    st.session_state["messages"].append(
+        {
+            "role": "assistant",
+            "content": answer,
+            "sources": turn.sources,
+            "images": turn.images,
+            "tool_calls": tool_calls,
+        }
+    )
 
 
 def main() -> None:
     """Punto de entrada de la aplicación Streamlit."""
-    st.set_page_config(
-        page_title="Asistente turístico de Tenerife",
-        page_icon="🌴",
-    )
-
-    st.title("🌴 Asistente turístico de Tenerife")
-    st.caption(
-        "Tu guía conversacional para descubrir la isla: playas, rutas, "
-        "gastronomía, cultura y el tiempo que hará."
-    )
+    st.set_page_config(page_title="Asistente turístico de Tenerife", page_icon="🌴")
+    inject_styles()
+    render_hero()
 
     settings = get_settings()
 
@@ -101,65 +269,26 @@ def main() -> None:
 
     rag = get_rag(settings)
 
-    # El asistente tiene estado mutable (historial), así que vive en la sesión.
-    if "assistant" not in st.session_state:
-        st.session_state["assistant"] = TouristAssistant(settings, rag)
-    assistant: TouristAssistant = st.session_state["assistant"]
-
-    # Historial visible de la conversación.
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
-    # --- Barra lateral: parámetros del modelo, reinicio y ejemplos ---
-    with st.sidebar:
-        st.header("⚙️ Parámetros del modelo")
-        st.write(f"**Modelo:** {settings.generation_model}")
-        st.write(f"**Temperature:** {settings.temperature}")
-        st.write(f"**Top-p:** {settings.top_p}")
-        st.write(f"**Máx. tokens de salida:** {settings.max_output_tokens}")
+    params = render_sidebar(settings)
+    assistant = get_assistant(settings, rag, params)
 
-        if st.button("🔄 Reiniciar conversación"):
-            st.session_state["messages"] = []
-            assistant.reset()
-            st.rerun()
+    render_history(st.session_state["messages"])
 
-        st.divider()
-        st.subheader("💡 Ejemplos de preguntas")
-        for question in EXAMPLE_QUESTIONS:
-            st.markdown(f"- {question}")
+    # Entrada del usuario: del chat o de un ejemplo pulsado. El ejemplo pendiente
+    # se extrae siempre (no debe quedar "atascado" para reaparecer más tarde).
+    pending = st.session_state.pop("pending_prompt", None)
+    prompt = st.chat_input("Escribe tu mensaje...") or pending
 
-    # --- Render del historial existente ---
-    for message in st.session_state["messages"]:
-        with st.chat_message(message["role"]):
-            st.write(message["content"])
-            render_sources(message.get("sources", []))
-            render_images(message.get("images", []))
+    # Estado de bienvenida: invita a probar con ejemplos clicables.
+    if not st.session_state["messages"] and not prompt:
+        st.markdown("#### ✨ Empieza por aquí")
+        render_example_buttons("ex_home", columns=2)
 
-    # --- Entrada de usuario y respuesta en streaming ---
-    prompt = st.chat_input("Escribe tu mensaje...")
     if prompt:
-        st.session_state["messages"].append(
-            {"role": "user", "content": prompt, "sources": [], "images": []}
-        )
-        with st.chat_message("user"):
-            st.write(prompt)
-
-        with st.chat_message("assistant"):
-            answer = st.write_stream(assistant.stream(prompt))
-            # Tras la respuesta, el asistente expone las fuentes y fotos recogidas.
-            sources = list(assistant.last_sources)
-            images = list(assistant.last_images)
-            render_sources(sources)
-            render_images(images)
-
-        st.session_state["messages"].append(
-            {
-                "role": "assistant",
-                "content": answer,
-                "sources": sources,
-                "images": images,
-            }
-        )
+        handle_turn(assistant, prompt)
 
 
 if __name__ == "__main__":

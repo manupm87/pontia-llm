@@ -13,8 +13,16 @@ capacidades:
   las del lugar recuperado junto a la respuesta.
 - **Consulta meteorológica** (`get_weather`): obtiene la previsión del tiempo en
   Tenerife para una fecha concreta a través de la API pública de Open-Meteo.
+- **Estado del mar** (`get_sea_conditions`): consulta el oleaje (altura y periodo)
+  en la API marina de Open-Meteo para saber si el mar está apto para el baño o el
+  surf, con respaldo simulado ante fallos de red.
+- **Fechas inteligentes** (`resolve_date`): traduce expresiones relativas ("hoy",
+  "mañana", "este finde", "el miércoles") a una fecha exacta `YYYY-MM-DD` para las
+  herramientas de tiempo y mar. El prompt de sistema se ancla a la fecha actual.
 - **Diálogo multiturno**: mantiene el contexto de la conversación para resolver
   preguntas encadenadas.
+- **Interfaz cuidada**: tema visual propio (CSS dinámico), ejemplos clicables,
+  actividad de las herramientas en vivo, galería de fotos y exportación del chat.
 
 El asistente está construido sobre **Google Gemini** orquestado con
 **LangChain**, usa un **vector store FAISS** para la búsqueda semántica y
@@ -25,8 +33,9 @@ El asistente está construido sobre **Google Gemini** orquestado con
 - **RAG expuesto como herramienta**: la búsqueda en la guía no está cableada de
   forma rígida en el flujo, sino que se ofrece al modelo como una *tool*
   (`search_tourist_guide`) que decide cuándo invocar.
-- **Function calling**: una función externa `get_weather` integrada también como
-  herramienta que el LLM puede llamar.
+- **Function calling**: funciones externas (`get_weather`, `get_sea_conditions`)
+  integradas como herramientas que el LLM puede llamar, además de `resolve_date`
+  para normalizar fechas relativas.
 - **Conversación multiturno**: gestión de historial con recorte automático para
   mantener el contexto bajo control.
 - **Stack Gemini + LangChain** con **FAISS** como vector store.
@@ -86,14 +95,18 @@ Usuario ──▶ TouristAssistant (LangChain + Gemini)
 ```
 .
 ├── app.py                     # Interfaz web con Streamlit
+├── ui_theme.py                # Tema visual (CSS dinámico + cabecera animada)
 ├── core/                      # Paquete reutilizable del asistente
 │   ├── __init__.py
 │   ├── config.py              # Settings inmutable y carga desde el entorno
 │   ├── weather.py             # Función externa get_weather (Open-Meteo)
+│   ├── sea.py                 # Función externa get_sea_conditions (Open-Meteo marino)
+│   ├── dates.py               # resolve_date: fechas relativas -> YYYY-MM-DD
 │   ├── rag.py                 # Indexado del PDF y recuperación con citas
 │   ├── images.py              # Extracción de las fotos del PDF (por página)
 │   ├── tools.py               # Herramientas LangChain (@tool) para el LLM
 │   └── assistant.py           # Asistente conversacional (chat / stream)
+├── tests/                     # Suite de tests (pytest)
 ├── data/
 │   └── TENERIFE.pdf           # Guía oficial usada como fuente del RAG
 ├── storage/
@@ -149,8 +162,19 @@ citas, llamadas a herramientas y conversación multiturno.
 streamlit run app.py
 ```
 
-La app ofrece el chat con el asistente, preguntas de ejemplo, respuesta en
-*streaming* y el panel de fuentes citadas en cada respuesta.
+La app ofrece el chat con el asistente, preguntas de ejemplo clicables, respuesta
+en *streaming*, la actividad de las herramientas en vivo, la galería de fotos de
+la guía, el panel de fuentes citadas y la exportación de la conversación.
+
+## Tests
+
+La lógica reutilizable (fechas, estado del mar, herramientas y orquestación del
+asistente) está cubierta por una suite de `pytest` que no requiere red ni las
+dependencias pesadas (usa dobles de prueba para el LLM y el RAG):
+
+```bash
+python -m pytest
+```
 
 ## Parámetros del modelo configurables por entorno
 
