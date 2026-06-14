@@ -144,15 +144,15 @@ entre ejecuciones del notebook y reinicios del servidor Streamlit
 latencia) y es el estándar de las sesiones de RAG del máster.
 
 ### Parámetros de troceado y recuperación
-- `chunk_size = 1000`, `chunk_overlap = 150` con
+- `chunk_size = 500`, `chunk_overlap = 100` con
   `RecursiveCharacterTextSplitter`: fragmentos lo bastante grandes para conservar
   contexto de un párrafo/apartado, con solape suficiente para no cortar ideas a
   mitad. `add_start_index=True` para trazabilidad.
-- `top_k = 4`: recupera los 4 fragmentos más similares. Suficiente para cubrir la
+- `top_k = 5`: recupera los 5 fragmentos más similares. Suficiente para cubrir la
   respuesta sin saturar el contexto ni diluir la relevancia.
 - Cada fragmento lleva metadatos de **cita** (`source_name`, `page`, `chunk_id`),
-  que se vuelcan en encabezados `[Fuente i: ..., página N, fragmento M]` y en
-  `last_sources` para mostrarlos en la interfaz.
+  que se vuelcan en encabezados `[Fuente i: ..., página N, fragmento M]` y en el
+  *artifact* de cada llamada a la herramienta para mostrarlos en la interfaz.
 
 ### Control de longitud del historial
 El diálogo multiturno crece sin límite, lo que dispara coste y puede degradar la
@@ -279,9 +279,9 @@ Al no disponer de un *dataset* de referencia anotado, la evaluación es
 | **PDF expuesto como HERRAMIENTA** | `core/tools.py` → `@tool search_tourist_guide` |
 | **Vector store FAISS** | `core/rag.py` (`FAISS.from_documents`, `save_local`/`load_local`); índice en `storage/faiss_index` |
 | **Embeddings** | `core/rag.py` → `GoogleGenerativeAIEmbeddings(models/gemini-embedding-001)` |
-| **Troceado del documento** | `core/rag.py` → `RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)` |
-| **Citado de fuentes** | `core/rag.py` (`format_context`, `_doc_to_source`, `last_sources`); `app.py` (`render_sources`) |
-| **Anclaje al documento (*grounding*) y citas en cada turno** | `core/assistant.py` → `SYSTEM_PROMPT` + andamiaje efímero en `chat`/`stream`/`_run_tool_rounds` |
+| **Troceado del documento** | `core/rag.py` → `RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)` |
+| **Citado de fuentes** | `core/rag.py` (`format_context`, `_doc_to_source`); citas por llamada en el *artifact* de la herramienta; `app.py` (`render_sources`) |
+| **Anclaje al documento (*grounding*) y citas en cada turno** | `core/assistant.py` → `SYSTEM_PROMPT` + andamiaje efímero en `chat`/`stream`/`prepare` |
 | **Imágenes del PDF mostradas en el chat** | `core/images.py` (`GuideImageStore`); `core/rag.py` (`last_images`); `app.py` (`render_images`) |
 | **Function call `get_weather`** | `core/weather.py` (`get_weather`) + `core/tools.py` (`@tool get_weather`) |
 | **API externa real** | `core/weather.py` → Open-Meteo (`OPEN_METEO_URL`) con *fallback* |

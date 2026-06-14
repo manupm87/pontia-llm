@@ -10,8 +10,9 @@ que se puede probar inyectando ``today``.
 from __future__ import annotations
 
 import re
-import unicodedata
 from datetime import date, timedelta
+
+from .text import normalize_text
 
 # Horizonte máximo (días) admitido para un desplazamiento relativo: coincide con
 # el alcance típico de la previsión de Open-Meteo.
@@ -43,7 +44,8 @@ def resolve_date(expression: str, *, today: date | None = None) -> str:
     ``ValueError`` si no puede interpretar la expresión.
     """
     base = today or date.today()
-    text = _normalize(expression)
+    text = normalize_text(expression)
+    tokens = set(re.findall(r"\w+", text))
 
     # Fecha absoluta ya en ISO: se valida y se devuelve tal cual.
     if _ISO_RE.match(text):
@@ -58,13 +60,18 @@ def resolve_date(expression: str, *, today: date | None = None) -> str:
     if "pasado manana" in text:
         return (base + timedelta(days=2)).isoformat()
 
-    # Fin de semana -> próximo sábado (hoy mismo si ya es sábado).
+    # Fin de semana -> próximo sábado, salvo que hoy ya sea sábado o domingo: en
+    # ese caso "este finde" se refiere al fin de semana en curso (devuelve hoy).
     if "finde" in text or "fin de semana" in text:
+        if base.weekday() in (_WEEKDAYS["sabado"], _WEEKDAYS["domingo"]):
+            return base.isoformat()
         return _next_weekday(base, _WEEKDAYS["sabado"], force_next_week=False).isoformat()
 
-    # Día de la semana con nombre ("el miércoles", "el lunes que viene").
+    # Día de la semana con nombre ("el miércoles", "el lunes que viene"). Se exige
+    # que el nombre aparezca como palabra completa (token), no como subcadena, para
+    # no confundir frases como "mañana es martes" con un cambio de día objetivo.
     for name, index in _WEEKDAYS.items():
-        if name in text:
+        if name in tokens:
             force = any(hint in text for hint in _NEXT_WEEK_HINTS)
             return _next_weekday(base, index, force_next_week=force).isoformat()
 
@@ -105,11 +112,3 @@ def _next_weekday(base: date, target: int, *, force_next_week: bool) -> date:
         # "que viene" / "próximo": el de la semana siguiente, no el más cercano.
         delta += 7
     return base + timedelta(days=delta)
-
-
-def _normalize(expression: str) -> str:
-    """Normaliza la expresión: minúsculas, sin acentos y con espacios colapsados."""
-    text = (expression or "").strip().lower()
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    return re.sub(r"\s+", " ", text)

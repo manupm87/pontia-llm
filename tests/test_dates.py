@@ -87,9 +87,26 @@ def test_week_expressions(expression: str, days: int) -> None:
 
 
 @pytest.mark.parametrize("expression", ["finde", "fin de semana", "este finde"])
-def test_weekend_resolves_to_next_saturday(expression: str) -> None:
-    # Desde el domingo 14, el próximo sábado es el 20.
-    assert resolve_date(expression, today=SUNDAY) == date(2026, 6, 20).isoformat()
+def test_weekend_on_weekend_resolves_to_today(expression: str) -> None:
+    # Hoy es domingo (fin de semana en curso): "este finde" debe ser hoy mismo,
+    # no el próximo sábado. Cubre el bug que saltaba el fin de semana actual.
+    assert resolve_date(expression, today=SUNDAY) == SUNDAY.isoformat()
+
+
+@pytest.mark.parametrize("expression", ["finde", "fin de semana", "este finde"])
+def test_weekend_midweek_resolves_to_next_saturday(expression: str) -> None:
+    # Entre semana (miércoles 17), "este finde" es el próximo sábado (20).
+    wednesday = date(2026, 6, 17)
+    assert resolve_date(expression, today=wednesday) == date(2026, 6, 20).isoformat()
+
+
+@pytest.mark.parametrize("expression", ["el martesx", "lunescheck", "sabadomingo"])
+def test_weekday_substring_does_not_misfire(expression: str) -> None:
+    # Un nombre de día incrustado en una palabra mayor ("martesx") no debe contar
+    # como ese día: solo se empareja como token (palabra completa). Antes, el
+    # emparejado por subcadena lo confundía; ahora es ininterpretable -> ValueError.
+    with pytest.raises(ValueError):
+        resolve_date(expression, today=SUNDAY)
 
 
 def test_absolute_iso_date_passes_through() -> None:

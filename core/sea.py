@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import time
-from datetime import datetime
 
-import requests
+import requests  # noqa: F401 - reexportado para que los tests puedan parchear ``requests.get``
 
 from .config import TENERIFE_LATITUDE, TENERIFE_LONGITUDE
+from .meteo import fetch_with_fallback
 
 logger = logging.getLogger("asistente_tenerife.sea")
 
@@ -43,55 +42,25 @@ def get_sea_conditions(
     parseo se usa una simulación determinista como respaldo. Cada intento se
     añade a ``SEA_CALL_LOG``.
     """
-    # Validación de formato: este error SÍ se propaga.
-    try:
-        datetime.strptime(date, "%Y-%m-%d")
-    except ValueError as exc:
-        raise ValueError(
-            f"Fecha inválida '{date}': se espera el formato YYYY-MM-DD."
-        ) from exc
-
-    start = time.perf_counter()
-    error: str | None = None
-    try:
-        params = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "daily": "wave_height_max,wave_period_max",
-            "timezone": "auto",
-            "start_date": date,
-            "end_date": date,
-        }
-        response = requests.get(OPEN_METEO_MARINE_URL, params=params, timeout=timeout)
-        response.raise_for_status()
-        result = _parse_response(date, response.json())
-    except Exception as exc:  # noqa: BLE001 - cualquier fallo de red/parseo -> fallback
-        error = str(exc)
-        result = _simulated_sea(date)
-    finally:
-        elapsed = time.perf_counter() - start
-
-    ok = error is None
-    SEA_CALL_LOG.append(
-        {
-            "date": date,
-            "ok": ok,
-            "source": result["source"],
-            "elapsed_s": elapsed,
-            "error": error,
-        }
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "daily": "wave_height_max,wave_period_max",
+        "timezone": "auto",
+        "start_date": date,
+        "end_date": date,
+    }
+    return fetch_with_fallback(
+        date,
+        url=OPEN_METEO_MARINE_URL,
+        params=params,
+        parse_fn=_parse_response,
+        simulate_fn=_simulated_sea,
+        call_log=SEA_CALL_LOG,
+        logger=logger,
+        label="Estado del mar",
+        timeout=timeout,
     )
-
-    if ok:
-        logger.info("Estado del mar para %s desde %s en %.3fs.", date, result["source"], elapsed)
-    else:
-        logger.warning(
-            "Fallo al consultar la API marina para %s (%s); usando simulación.",
-            date,
-            error,
-        )
-
-    return result
 
 
 def _parse_response(date: str, payload: dict) -> dict:
@@ -125,7 +94,7 @@ def _simulated_sea(date: str) -> dict:
     Usa el hash MD5 de la fecha para generar valores reproducibles y plausibles
     (oleaje suave habitual en las costas de la isla).
     """
-    digest = hashlib.md5(date.encode("utf-8")).digest()
+    digest = hashlib.md5(date.encode("utf-8"), usedforsecurity=False).digest()
     # Altura entre 0.3 y 2.1 m; periodo entre 6 y 12 s.
     wave_height = round(0.3 + (digest[0] % 19) * 0.1, 1)
     wave_period = float(6 + digest[1] % 7)

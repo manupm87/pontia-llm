@@ -16,7 +16,7 @@ import streamlit as st
 
 from core.config import Settings, load_settings
 from core.rag import TouristGuideRAG
-from core.assistant import TouristAssistant, ToolCallRecord, estimate_cost
+from core.assistant import TouristAssistant, ToolCallRecord, TurnContext, estimate_cost
 from core.guardrails import Guardrails, build_llm_guardrails
 from core.photo_match import plan_inline_images
 from ui_theme import inject_styles, render_hero
@@ -84,6 +84,22 @@ def get_assistant(
     return st.session_state["assistant"]
 
 
+def configure_guardrails(assistant: TouristAssistant, advanced: bool) -> None:
+    """Ajusta los guardarraíles del asistente según el modo, sin reconstruir cada rerun.
+
+    Los guardarraíles avanzados envuelven al LLM (instanciar en cada rerun de
+    Streamlit sería costoso), así que solo se reconstruyen cuando cambia el modo
+    o el asistente. La marca se guarda en la propia instancia del asistente, de
+    modo que un asistente nuevo (al reajustar parámetros) recibe unos frescos.
+    """
+    mode = bool(advanced)
+    if getattr(assistant, "_guardrails_mode", None) != mode:
+        assistant.guardrails = (
+            build_llm_guardrails(assistant.llm) if advanced else Guardrails()
+        )
+        assistant._guardrails_mode = mode
+
+
 def render_tool_activity(records: list[ToolCallRecord], container) -> None:
     """Escribe en vivo (dentro del ``st.status``) las herramientas ejecutadas."""
     for record in records:
@@ -113,7 +129,7 @@ def render_reasoning(reasoning: str) -> None:
         st.markdown(reasoning)
 
 
-def stream_with_reasoning(assistant: TouristAssistant, turn) -> tuple[str, str]:
+def stream_with_reasoning(assistant: TouristAssistant, turn: TurnContext) -> tuple[str, str]:
     """Emite razonamiento y respuesta en vivo; devuelve ``(respuesta, razonamiento)``.
 
     El razonamiento se va mostrando en directo y, al terminar, se reemplaza por
@@ -160,6 +176,8 @@ def render_sources(sources: list[dict]) -> None:
 
 def render_gallery(images: list[dict]) -> None:
     """Renderiza un conjunto de fotos en columnas."""
+    if not images:  # ``st.columns(0)`` lanzaría error; nada que mostrar.
+        return
     columns = st.columns(min(len(images), 3))
     for index, img in enumerate(images):
         with columns[index % len(columns)]:
@@ -401,8 +419,7 @@ def main() -> None:
 
     temperature, top_p, max_tokens, thinking_budget, streaming, advanced = render_sidebar(settings)
     assistant = get_assistant(settings, rag, (temperature, top_p, max_tokens, thinking_budget))
-    # Guardarraíles: avanzados (LLM) o solo reglas de entrada, según el modo.
-    assistant.guardrails = build_llm_guardrails(assistant.llm) if advanced else Guardrails()
+    configure_guardrails(assistant, advanced)
 
     render_history(st.session_state["messages"])
 

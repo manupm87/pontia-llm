@@ -33,8 +33,6 @@ class TouristGuideRAG:
         self.vector_store: FAISS | None = None
         # Almacén de fotos de la guía, indexadas por página.
         self.image_store = GuideImageStore(settings)
-        self.last_sources: list[dict] = []
-        self.last_images: list[dict] = []
 
     def build_index(self, force: bool = False) -> None:
         """Construye o carga el índice FAISS (y las imágenes) desde disco.
@@ -80,6 +78,8 @@ class TouristGuideRAG:
             k = self.settings.top_k
         if self.vector_store is None:
             self.build_index()
+        if self.vector_store is None:  # Salvaguarda: el índice debería existir ya.
+            raise RuntimeError("El índice FAISS no se pudo construir ni cargar.")
         return self.vector_store.similarity_search(query, k)
 
     def retrieve(self, query: str, k: int | None = None) -> dict:

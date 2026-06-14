@@ -9,6 +9,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from core import sea
 from core.sea import get_sea_conditions
@@ -81,7 +82,7 @@ def test_simulation_within_documented_ranges() -> None:
 
 
 def test_network_failure_falls_back_to_simulation() -> None:
-    with patch("core.sea.requests.get", side_effect=Exception("boom")):
+    with patch("core.sea.requests.get", side_effect=requests.RequestException("boom")):
         result = get_sea_conditions("2026-06-20")
     assert result["source"] == "simulada (fallback)"
     assert "wave_height_max_m" in result
@@ -90,7 +91,17 @@ def test_network_failure_falls_back_to_simulation() -> None:
 
 
 def test_simulation_is_deterministic() -> None:
-    with patch("core.sea.requests.get", side_effect=Exception("boom")):
+    with patch("core.sea.requests.get", side_effect=requests.RequestException("boom")):
         a = get_sea_conditions("2026-06-20")
         b = get_sea_conditions("2026-06-20")
     assert a["wave_height_max_m"] == b["wave_height_max_m"]
+
+
+def test_http_200_error_payload_falls_back_to_simulation() -> None:
+    # Open-Meteo puede responder HTTP 200 con un cuerpo de error.
+    payload = {"error": True, "reason": "fechas fuera de rango"}
+    with patch("core.sea.requests.get", return_value=_fake_response(payload)):
+        result = get_sea_conditions("2026-06-20")
+    assert result["source"] == "simulada (fallback)"
+    assert sea.SEA_CALL_LOG[-1]["ok"] is False
+    assert "fechas fuera de rango" in sea.SEA_CALL_LOG[-1]["error"]

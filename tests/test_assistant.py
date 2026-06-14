@@ -166,6 +166,45 @@ def test_discard_last_user_turn_removes_dangling_human() -> None:
     )
 
 
+def _unknown_tool_call_msg() -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "herramienta_inexistente",
+                "args": {"x": 1},
+                "id": "call_x",
+                "type": "tool_call",
+            }
+        ],
+    )
+
+
+def test_unknown_tool_call_is_handled_without_aborting_turn() -> None:
+    # Una herramienta alucinada por el modelo no debe romper el turno.
+    assistant = _build_assistant(
+        invoke_script=[_unknown_tool_call_msg(), AIMessage(content="Sigo adelante.")],
+        stream_chunks=[],
+    )
+    result = assistant.chat("hola")
+    assert result["answer"] == "Sigo adelante."
+    record = assistant.tool_log[-1]
+    assert record.name == "herramienta_inexistente"
+    assert record.ok is False
+    assert "no existe" in record.result
+
+
+def test_tool_round_budget_exhaustion_still_answers() -> None:
+    # Si se agotan las rondas pidiendo herramientas, se fuerza un cierre final.
+    assistant = _build_assistant(
+        invoke_script=[_tool_call_msg(), _tool_call_msg(), AIMessage(content="Cierre forzado.")],
+        stream_chunks=[],
+    )
+    result = assistant.chat("hola", max_tool_rounds=2)
+    assert result["answer"] == "Cierre forzado."
+    assert assistant.llm.invoke_calls == 3
+
+
 def test_split_content_variants() -> None:
     assert _split_content(AIMessageChunk(content="hola")) == [(False, "hola")]
     assert _split_content(AIMessageChunk(content=[{"type": "thinking", "thinking": "t"}])) == [

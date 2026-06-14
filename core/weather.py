@@ -11,12 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import time
-from datetime import datetime
 
-import requests
+import requests  # noqa: F401 - reexportado para que los tests puedan parchear ``requests.get``
 
 from .config import TENERIFE_LATITUDE, TENERIFE_LONGITUDE
+from .meteo import fetch_with_fallback
 
 logger = logging.getLogger("asistente_tenerife.weather")
 
@@ -45,59 +44,25 @@ def get_weather(
     determinista como respaldo. Cualquier intento se añade a
     ``WEATHER_CALL_LOG``.
     """
-    # Validación de formato: este error SÍ se propaga.
-    try:
-        datetime.strptime(date, "%Y-%m-%d")
-    except ValueError as exc:
-        raise ValueError(
-            f"Fecha inválida '{date}': se espera el formato YYYY-MM-DD."
-        ) from exc
-
-    start = time.perf_counter()
-    error: str | None = None
-    try:
-        params = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
-            "timezone": "auto",
-            "start_date": date,
-            "end_date": date,
-        }
-        response = requests.get(OPEN_METEO_URL, params=params, timeout=timeout)
-        response.raise_for_status()
-        result = _parse_response(date, response.json())
-    except Exception as exc:  # noqa: BLE001 - cualquier fallo de red/parseo -> fallback
-        error = str(exc)
-        result = _simulated_weather(date)
-    finally:
-        elapsed = time.perf_counter() - start
-
-    ok = error is None
-    record = {
-        "date": date,
-        "ok": ok,
-        "source": result["source"],
-        "elapsed_s": elapsed,
-        "error": error,
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+        "timezone": "auto",
+        "start_date": date,
+        "end_date": date,
     }
-    WEATHER_CALL_LOG.append(record)
-
-    if ok:
-        logger.info(
-            "Previsión obtenida para %s desde %s en %.3fs.",
-            date,
-            result["source"],
-            elapsed,
-        )
-    else:
-        logger.warning(
-            "Fallo al consultar Open-Meteo para %s (%s); usando previsión simulada.",
-            date,
-            error,
-        )
-
-    return result
+    return fetch_with_fallback(
+        date,
+        url=OPEN_METEO_URL,
+        params=params,
+        parse_fn=_parse_response,
+        simulate_fn=_simulated_weather,
+        call_log=WEATHER_CALL_LOG,
+        logger=logger,
+        label="Previsión meteorológica",
+        timeout=timeout,
+    )
 
 
 def _parse_response(date: str, payload: dict) -> dict:
@@ -135,7 +100,7 @@ def _simulated_weather(date: str) -> dict:
     Usa el hash MD5 de la fecha para generar valores reproducibles y plausibles
     (temperaturas típicas de la isla, entre 18 y 30°C).
     """
-    digest = hashlib.md5(date.encode("utf-8")).digest()
+    digest = hashlib.md5(date.encode("utf-8"), usedforsecurity=False).digest()
 
     # Máxima entre 22 y 30°C; mínima 4-7°C por debajo de la máxima.
     temp_max = 22.0 + digest[0] % 9  # 22..30

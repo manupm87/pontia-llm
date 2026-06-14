@@ -9,7 +9,9 @@ mantiene aparte de la interfaz para poder probarla.
 from __future__ import annotations
 
 import re
-import unicodedata
+
+# Se reexporta ``normalize_text`` para mantener la API pública del módulo.
+from .text import normalize_text  # noqa: F401
 
 # Palabras genéricas de tipo de lugar: no sirven para emparejar (toda foto de
 # "playa" coincidiría con cualquier mención de "playa").
@@ -19,12 +21,6 @@ PLACE_STOPWORDS = {
     "centro", "ruta", "sendero", "camino", "pueblo", "ciudad", "isla", "norte",
     "sur", "este", "oeste", "zona", "para", "como", "desde", "hasta", "donde",
 }
-
-
-def normalize_text(text: str) -> str:
-    """Minúsculas y sin acentos, para comparar nombres de lugar de forma laxa."""
-    text = unicodedata.normalize("NFKD", text.lower())
-    return "".join(c for c in text if not unicodedata.combining(c))
 
 
 def place_tokens(caption: str) -> list[str]:
@@ -49,11 +45,13 @@ def plan_inline_images(text: str, images: list[dict]) -> list[tuple[str, object]
 
     for line in text.split("\n"):
         segments.append(("text", line))
-        normalized = normalize_text(line)
+        # Se comparan palabras completas (no subcadenas) para que un token como
+        # "anaga" no encaje dentro de una palabra mayor no relacionada.
+        words = set(re.findall(r"\w+", normalize_text(line)))
         matched = [
             item
             for item in pending
-            if not item[2] and item[1] and any(tok in normalized for tok in item[1])
+            if not item[2] and item[1] and any(tok in words for tok in item[1])
         ]
         if matched:
             segments.append(("images", [item[0] for item in matched]))

@@ -91,6 +91,25 @@ def test_get_sea_conditions_tool_validates_date() -> None:
     assert "YYYY-MM-DD" in out
 
 
+def test_get_weather_tool_returns_json() -> None:
+    payload = {
+        "date": "2026-06-20",
+        "temp_max_c": 28.0,
+        "temp_min_c": 21.0,
+        "precipitation_mm": 0.0,
+        "summary": "Soleado",
+        "source": "open-meteo",
+    }
+    with patch("core.tools.fetch_weather", return_value=payload):
+        out = tools.get_weather.invoke({"date": "2026-06-20"})
+    assert json.loads(out)["temp_max_c"] == 28.0
+
+
+def test_get_weather_tool_validates_date() -> None:
+    out = tools.get_weather.invoke({"date": "nope"})
+    assert "YYYY-MM-DD" in out
+
+
 def test_get_tools_exposes_all_four() -> None:
     names = {t.name for t in tools.get_tools()}
     assert names == {

@@ -40,6 +40,19 @@ def test_match_is_accent_and_case_insensitive() -> None:
     assert ("images", [images[0]]) in plan
 
 
+def test_token_does_not_match_inside_longer_word() -> None:
+    # "anaga" no debe encajar dentro de "anagaza" (palabra mayor no relacionada):
+    # el emparejado es por palabra completa, no por subcadena. Sin mención real,
+    # la foto se agrupa al final.
+    text = "Cuidado con la anagaza del vendedor."
+    images = [_img("/t/anaga.jpg", "Bosque de Anaga")]
+    plan = plan_inline_images(text, images)
+    # No se coloca tras la línea (no hay mención de palabra completa).
+    assert plan[0] == ("text", "Cuidado con la anagaza del vendedor.")
+    assert plan[1] == ("images", [images[0]])  # va al final como no mencionada
+    assert len([seg for seg in plan if seg[0] == "text"]) == 1
+
+
 def test_each_image_placed_once() -> None:
     text = "Teide por la mañana.\nTeide por la tarde."
     images = [_img("/t/teide.jpg", "Teide")]

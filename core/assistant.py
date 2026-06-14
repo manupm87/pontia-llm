@@ -4,9 +4,15 @@ Orquesta el diálogo multiturno con Gemini: gestiona el historial, ejecuta el
 bucle de *tool calling* (RAG sobre la guía, tiempo y estado del mar) y expone
 tanto una respuesta completa (``chat``) como una respuesta en *streaming* real
 de tokens (``stream``). El flujo se divide en dos fases públicas —``prepare``
-(resuelve las herramientas) y ``stream_answer`` (emite la respuesta)— para que
-la interfaz pueda mostrar en vivo qué herramientas se están usando. Mantiene un
-registro de las llamadas a herramientas para observabilidad.
+(resuelve las herramientas) y ``stream_reasoning_and_answer`` (emite el
+razonamiento y la respuesta)— para que la interfaz pueda mostrar en vivo qué
+herramientas se están usando. Mantiene un registro de las llamadas a
+herramientas para observabilidad.
+
+Nota de coste: el *streaming* realiza una generación adicional respecto a la
+ruta de una sola pasada (``prepare`` sondea el fin de las herramientas y
+``stream`` regenera la respuesta en vivo); ``total_usage`` contabiliza ambas
+porque ambas se facturan. El conmutador de la interfaz permite desactivarlo.
 """
 
 from __future__ import annotations
@@ -45,8 +51,16 @@ _PRICING_PER_1M: dict[str, tuple[float, float]] = {
 
 
 def estimate_cost(input_tokens: int, output_tokens: int, model: str) -> float:
-    """Estima el coste en USD de un uso de tokens para un modelo dado."""
-    price_in, price_out = _PRICING_PER_1M.get(model, (0.10, 0.40))
+    """Estima el coste en USD de un uso de tokens para un modelo dado.
+
+    Si el modelo no está en la tabla de precios, avisa y usa la tarifa más
+    barata como aproximación (la estimación sería poco fiable en ese caso).
+    """
+    price = _PRICING_PER_1M.get(model)
+    if price is None:
+        logger.warning("Sin tarifa para el modelo %r; se estima con la más barata.", model)
+        price = (0.10, 0.40)
+    price_in, price_out = price
     return (input_tokens * price_in + output_tokens * price_out) / 1_000_000
 
 # Días de la semana en español para anclar la fecha en el prompt de sistema.
@@ -234,13 +248,17 @@ class TouristAssistant:
         # Si todo falla, propaga el último error construyendo sin extras.
         return init_chat_model(settings.generation_model, **common)
 
-    def prepare(self, user_message: str, max_tool_rounds: int = 5) -> TurnContext:
+    def prepare(self, user_message: str, max_tool_rounds: int | None = None) -> TurnContext:
         """Resuelve las rondas de *tool calling* y deja el turno listo para responder.
 
         Añade el mensaje del usuario al historial, ejecuta las herramientas sobre
         una copia efímera (el andamiaje no persiste en memoria) y devuelve el
-        ``TurnContext`` con las herramientas usadas y las citas recogidas.
+        ``TurnContext`` con las herramientas usadas y las citas recogidas. El
+        límite de rondas (``max_tool_rounds``) corta posibles bucles; por defecto
+        toma ``settings.max_tool_rounds``.
         """
+        if max_tool_rounds is None:
+            max_tool_rounds = self.settings.max_tool_rounds
         self.history.append(HumanMessage(content=user_message))
         self.last_sources = []
         self.last_images = []
@@ -268,6 +286,13 @@ class TouristAssistant:
             working.append(ai)
             for call in ai.tool_calls:
                 working.append(self._execute_tool_call(call))
+        if final is None:
+            # Se agotó el presupuesto de rondas sin una respuesta final: se avisa
+            # y se deja que ``answer``/``stream`` generen el cierre sin herramientas.
+            logger.warning(
+                "Se alcanzó el máximo de %d rondas de herramientas sin respuesta final.",
+                max_tool_rounds,
+            )
 
         return TurnContext(
             working=working,
@@ -327,7 +352,7 @@ class TouristAssistant:
             if not is_thought:
                 yield text
 
-    def stream(self, user_message: str, max_tool_rounds: int = 5) -> Iterator[str]:
+    def stream(self, user_message: str, max_tool_rounds: int | None = None) -> Iterator[str]:
         """Resuelve las herramientas y emite la respuesta final token a token."""
         turn = self.prepare(user_message, max_tool_rounds)
         yield from self.stream_answer(turn)
@@ -351,7 +376,7 @@ class TouristAssistant:
         self._trim_history()
         return text
 
-    def chat(self, user_message: str, max_tool_rounds: int = 5) -> dict:
+    def chat(self, user_message: str, max_tool_rounds: int | None = None) -> dict:
         """Procesa un turno completo y devuelve respuesta, fuentes, fotos y trazas."""
         turn = self.prepare(user_message, max_tool_rounds)
         return {
@@ -367,25 +392,38 @@ class TouristAssistant:
         Para ``search_tourist_guide`` las citas (fuentes y fotos) llegan en el
         ``artifact`` del ``ToolMessage`` —por llamada— en lugar de leerse de
         estado compartido del RAG (evita mezclar resultados entre sesiones).
+
+        Tolera llamadas malformadas o a herramientas inexistentes (alucinadas
+        por el modelo): en lugar de propagar un ``KeyError`` y abortar el turno,
+        devuelve un ``ToolMessage`` de error que el modelo puede interpretar.
         """
-        name = call["name"]
-        tool = self.tools_by_name[name]
+        name = call.get("name", "")
+        call_id = call.get("id", "")
+        args = call.get("args", {}) or {}
         start = time.perf_counter()
-        try:
-            message = tool.invoke(call)
-            ok = True
-        except Exception as exc:  # noqa: BLE001 - resiliencia ante fallos de tool
+        tool = self.tools_by_name.get(name)
+        if tool is None:
             message = ToolMessage(
-                content=f"Error al ejecutar la herramienta '{name}': {exc}",
-                tool_call_id=call["id"],
+                content=f"Error: la herramienta '{name}' no existe.",
+                tool_call_id=call_id,
             )
             ok = False
+        else:
+            try:
+                message = tool.invoke(call)
+                ok = True
+            except Exception as exc:  # noqa: BLE001 - resiliencia ante fallos de tool
+                message = ToolMessage(
+                    content=f"Error al ejecutar la herramienta '{name}': {exc}",
+                    tool_call_id=call_id,
+                )
+                ok = False
         elapsed_s = time.perf_counter() - start
 
         self.tool_log.append(
             ToolCallRecord(
                 name=name,
-                arguments=dict(call["args"]),
+                arguments=dict(args),
                 ok=ok,
                 result=str(message.content),
                 elapsed_s=elapsed_s,

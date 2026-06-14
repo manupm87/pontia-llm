@@ -15,9 +15,12 @@ de forma perezosa para no exigirlos al importar el módulo.
 
 from __future__ import annotations
 
-import re
-import unicodedata
+import logging
 from dataclasses import dataclass, field
+
+from .text import normalize_text
+
+logger = logging.getLogger(__name__)
 
 # Marcas habituales de un rechazo o de "no tengo información".
 _REFUSAL_MARKERS = (
@@ -52,16 +55,9 @@ class EvalResult:
     tool_names: list[str] = field(default_factory=list)
 
 
-def _normalize(text: str) -> str:
-    """Minúsculas y sin acentos, para comparaciones laxas."""
-    text = unicodedata.normalize("NFKD", (text or "").lower())
-    text = "".join(c for c in text if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", text)
-
-
 def is_refusal(answer: str) -> bool:
     """Indica si la respuesta es un rechazo o un "no tengo información"."""
-    norm = _normalize(answer)
+    norm = normalize_text(answer)
     return any(marker in norm for marker in _REFUSAL_MARKERS)
 
 
@@ -72,14 +68,21 @@ def retrieval_hit(context: str, expected_keywords: tuple[str, ...]) -> bool:
     """
     if not expected_keywords:
         return True
-    norm = _normalize(context)
-    return any(_normalize(keyword) in norm for keyword in expected_keywords)
+    norm = normalize_text(context)
+    return any(normalize_text(keyword) in norm for keyword in expected_keywords)
 
 
 def score_correct(
     case: EvalCase, retrieval_ok: bool, faithful: bool | None, refused: bool
 ) -> bool:
-    """Decide si el caso se resolvió correctamente según su tipo."""
+    """Decide si el caso se resolvió correctamente según su tipo.
+
+    Importante: la exactitud es "ciega a la fidelidad" cuando no se aporta un juez
+    de grounding. Si ``faithful is None`` (no se juzgó), el caso cuenta como
+    correcto siempre que recupere lo esperado y no rechace; solo un veredicto
+    explícito ``faithful is False`` lo marca como incorrecto. Sin juez no se puede
+    distinguir una respuesta fiel de una alucinada.
+    """
     if case.kind == "out_of_scope":
         return refused
     # Dentro de ámbito: recupera lo esperado, no rechaza y (si se juzgó) es fiel.
@@ -103,6 +106,8 @@ def evaluate_case(
         try:
             faithful = grounding_judge(answer, context)
         except Exception:  # noqa: BLE001 - el juez no debe tumbar la evaluación
+            # Se registra el fallo para no tragarlo en silencio, pero se sigue.
+            logger.warning("El juez de fidelidad falló para %r", case.question, exc_info=True)
             faithful = None
 
     return EvalResult(

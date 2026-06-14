@@ -7,11 +7,14 @@ Define las constantes geográficas y de rutas del proyecto, la clase
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger("asistente_tenerife.config")
 
 # Coordenadas de referencia de Tenerife (Santa Cruz) para la previsión del tiempo.
 TENERIFE_LATITUDE = 28.4636
@@ -49,6 +52,8 @@ class Settings:
     chunk_overlap: int = 100
     top_k: int = 5
     max_history_messages: int = 12
+    # Número máximo de rondas de *tool calling* por turno (corta bucles).
+    max_tool_rounds: int = 5
     request_timeout: float = 45.0
     # Imágenes de la guía: tamaño mínimo (px) para descartar decoraciones y
     # número máximo de fotos que se muestran junto a cada respuesta.
@@ -61,6 +66,27 @@ class Settings:
         return bool(self.google_api_key)
 
 
+def _env_number(name: str, default: float, cast):
+    """Lee una variable de entorno numérica con un valor por defecto seguro.
+
+    Si la variable no se puede convertir (valor malformado), avisa y usa el
+    valor por defecto en lugar de abortar el arranque con un traceback opaco.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return cast(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Valor inválido para %s=%r; se usa el valor por defecto %r.",
+            name,
+            raw,
+            default,
+        )
+        return default
+
+
 def load_settings() -> Settings:
     """Carga la configuración desde el entorno (con valores por defecto).
 
@@ -68,7 +94,8 @@ def load_settings() -> Settings:
     ``Settings``. Toma del entorno la clave de API y los parámetros del
     modelo (``GENERATION_MODEL``, ``EMBEDDING_MODEL``, ``TEMPERATURE``,
     ``TOP_P``, ``MAX_OUTPUT_TOKENS``, ``THINKING_BUDGET``); el resto de campos
-    usa sus defaults.
+    usa sus defaults. Los valores numéricos malformados no abortan el arranque:
+    se registra un aviso y se usa el valor por defecto.
 
     Nota: ``load_dotenv`` deja ``GOOGLE_API_KEY`` en el entorno para que
     ``langchain-google-genai`` la detecte automáticamente.
@@ -79,8 +106,8 @@ def load_settings() -> Settings:
         google_api_key=os.getenv("GOOGLE_API_KEY"),
         generation_model=os.getenv("GENERATION_MODEL", "gemini-2.5-flash-lite"),
         embedding_model=os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001"),
-        temperature=float(os.getenv("TEMPERATURE", "0.2")),
-        top_p=float(os.getenv("TOP_P", "0.95")),
-        max_output_tokens=int(os.getenv("MAX_OUTPUT_TOKENS", "1024")),
-        thinking_budget=int(os.getenv("THINKING_BUDGET", "1024")),
+        temperature=_env_number("TEMPERATURE", 0.2, float),
+        top_p=_env_number("TOP_P", 0.95, float),
+        max_output_tokens=_env_number("MAX_OUTPUT_TOKENS", 1024, int),
+        thinking_budget=_env_number("THINKING_BUDGET", 1024, int),
     )
