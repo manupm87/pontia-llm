@@ -2,10 +2,13 @@
 
 Interfaz de chat conversacional que combina RAG sobre la guía oficial
 (TENERIFE.pdf), diálogo multiturno y la function call ``get_weather``.
-La respuesta se muestra en streaming y se acompaña de las fuentes citadas.
+La respuesta se muestra en streaming y se acompaña de las fuentes citadas y de
+las fotos de los lugares recuperados de la guía.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import streamlit as st
 
@@ -55,6 +58,22 @@ def render_sources(sources: list[dict]) -> None:
             snippet = source.get("snippet")
             if snippet:
                 st.caption(snippet)
+
+
+def render_images(images: list[dict]) -> None:
+    """Muestra las fotos de los lugares recuperados de la guía."""
+    if not images:
+        return
+    # Solo se muestran las fotos cuyo archivo sigue existiendo en disco.
+    available = [img for img in images if Path(img.get("path", "")).is_file()]
+    if not available:
+        return
+    with st.expander("🖼️ Fotos de la guía", expanded=True):
+        for img in available:
+            page = img.get("page")
+            page_label = page + 1 if isinstance(page, int) else "?"
+            caption = img.get("caption") or "Foto de la guía"
+            st.image(img["path"], caption=f"{caption} (página {page_label})")
 
 
 def main() -> None:
@@ -114,24 +133,32 @@ def main() -> None:
         with st.chat_message(message["role"]):
             st.write(message["content"])
             render_sources(message.get("sources", []))
+            render_images(message.get("images", []))
 
     # --- Entrada de usuario y respuesta en streaming ---
     prompt = st.chat_input("Escribe tu mensaje...")
     if prompt:
         st.session_state["messages"].append(
-            {"role": "user", "content": prompt, "sources": []}
+            {"role": "user", "content": prompt, "sources": [], "images": []}
         )
         with st.chat_message("user"):
             st.write(prompt)
 
         with st.chat_message("assistant"):
             answer = st.write_stream(assistant.stream(prompt))
-            # Tras la respuesta, el asistente expone las fuentes recogidas.
+            # Tras la respuesta, el asistente expone las fuentes y fotos recogidas.
             sources = list(assistant.last_sources)
+            images = list(assistant.last_images)
             render_sources(sources)
+            render_images(images)
 
         st.session_state["messages"].append(
-            {"role": "assistant", "content": answer, "sources": sources}
+            {
+                "role": "assistant",
+                "content": answer,
+                "sources": sources,
+                "images": images,
+            }
         )
 
 

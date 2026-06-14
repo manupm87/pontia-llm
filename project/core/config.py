@@ -21,6 +21,7 @@ TENERIFE_LONGITUDE = -16.2518
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PDF_PATH = PROJECT_ROOT / "data" / "TENERIFE.pdf"
 DEFAULT_INDEX_DIR = PROJECT_ROOT / "storage" / "faiss_index"
+DEFAULT_IMAGES_DIR = PROJECT_ROOT / "storage" / "images"
 
 
 @dataclass(frozen=True)
@@ -40,11 +41,16 @@ class Settings:
     max_output_tokens: int = 1024
     pdf_path: Path = DEFAULT_PDF_PATH
     index_dir: Path = DEFAULT_INDEX_DIR
+    images_dir: Path = DEFAULT_IMAGES_DIR
     chunk_size: int = 1000
     chunk_overlap: int = 150
     top_k: int = 4
     max_history_messages: int = 12
     request_timeout: float = 45.0
+    # Imágenes de la guía: tamaño mínimo (px) para descartar decoraciones y
+    # número máximo de fotos que se muestran junto a cada respuesta.
+    min_image_size: int = 200
+    max_images_shown: int = 3
 
     @property
     def has_api_key(self) -> bool:

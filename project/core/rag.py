@@ -3,12 +3,11 @@
 Este módulo carga la guía oficial de Tenerife (``TENERIFE.pdf``), la divide en
 fragmentos, genera embeddings con Gemini y los almacena en un índice FAISS
 persistente. Expone además una recuperación que devuelve el contexto formateado
-junto con las fuentes citadas (nombre de archivo, página y fragmento).
+junto con las fuentes citadas (nombre de archivo, página y fragmento) y las
+fotos de los lugares recuperados.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
@@ -17,6 +16,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from .config import Settings
+from .images import GuideImageStore
 
 
 class TouristGuideRAG:
@@ -31,15 +31,22 @@ class TouristGuideRAG:
         self.settings = settings
         self.embeddings = GoogleGenerativeAIEmbeddings(model=settings.embedding_model)
         self.vector_store: FAISS | None = None
+        # Almacén de fotos de la guía, indexadas por página.
+        self.image_store = GuideImageStore(settings)
         self.last_sources: list[dict] = []
+        self.last_images: list[dict] = []
 
     def build_index(self, force: bool = False) -> None:
-        """Construye o carga el índice FAISS desde disco.
+        """Construye o carga el índice FAISS (y las imágenes) desde disco.
 
         Si el índice ya existe y ``force`` es ``False``, se carga directamente.
         En caso contrario, lee el PDF, lo trocea, añade metadatos de cita a cada
         fragmento, genera el índice y lo guarda en ``settings.index_dir``.
+        Además extrae (o recarga) las fotos de la guía.
         """
+        # Las fotos de la guía se extraen una vez y se reutilizan.
+        self.image_store.build(force=force)
+
         index_dir = self.settings.index_dir
         if index_dir.exists() and not force:
             self.vector_store = FAISS.load_local(
@@ -76,16 +83,25 @@ class TouristGuideRAG:
         return self.vector_store.similarity_search(query, k)
 
     def retrieve(self, query: str, k: int | None = None) -> dict:
-        """Recupera contexto y fuentes para una consulta.
+        """Recupera contexto, fuentes e imágenes para una consulta.
 
         Devuelve un diccionario con el contexto formateado (listo para el
-        prompt) y la lista de fuentes citadas, que además se almacena en
-        ``last_sources`` para que la interfaz pueda mostrarlas.
+        prompt), la lista de fuentes citadas y las fotos de los lugares
+        recuperados. Fuentes e imágenes se almacenan además en
+        ``last_sources`` y ``last_images`` para que la interfaz las muestre.
         """
         docs = self.search(query, k)
         sources = [_doc_to_source(d) for d in docs]
+        # Fotos de las páginas recuperadas, en orden de relevancia y sin repetir.
+        pages = [d.metadata.get("page") for d in docs if isinstance(d.metadata.get("page"), int)]
+        images = self.image_store.images_for_pages(pages)
         self.last_sources = sources
-        return {"context": self.format_context(docs), "sources": sources}
+        self.last_images = images
+        return {
+            "context": self.format_context(docs),
+            "sources": sources,
+            "images": images,
+        }
 
     @staticmethod
     def format_context(docs: list[Document]) -> str:
