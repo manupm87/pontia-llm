@@ -1,0 +1,20 @@
+[project]
+name = "pontia-sesion-05"
+version = "0.1.0"
+description = "Entorno reproducible para el notebook de agentes con LLMs."
+readme = "README.md"
+requires-python = "==3.11.*"
+dependencies = [
+  "graphviz",
+  "ipykernel",
+  "jupyterlab",
+  "openai",
+  "openai-agents",
+  "pandas",
+  "pydantic",
+  "python-dotenv",
+]
+
+[tool.uv]
+package = false
+python-preference = "managed"

@@ -1,0 +1,30 @@
+# Dependencias principales del asistente turístico de Tenerife.
+# Versiones alineadas con las sesiones del máster (sesión 03 de RAG) para
+# garantizar reproducibilidad. Las dependencias transitivas las resuelve pip.
+
+# LLM y orquestación (Google Gemini vía LangChain)
+langchain==1.2.18
+langchain-core==1.3.3
+langchain-community==0.4.1
+langchain-google-genai==4.2.2
+langchain-text-splitters==1.1.2
+google-genai==1.75.0
+
+# Carga e indexado del PDF + vector store
+pypdf==6.11.0
+faiss-cpu
+
+# Llamada a función externa (Open-Meteo) y configuración
+requests==2.33.1
+python-dotenv==1.2.2
+pydantic==2.13.4
+
+# Interfaz web (bonus de despliegue y streaming)
+streamlit
+
+# Notebook, evaluación y gráficas
+jupyterlab==4.5.7
+ipykernel==7.2.0
+nbformat==5.10.4
+pandas==3.0.3
+matplotlib

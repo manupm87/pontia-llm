@@ -1,0 +1,23 @@
+[project]
+name = "pontia-sesion-03"
+version = "0.1.0"
+description = "Entorno reproducible para el notebook sesion_03_2.ipynb."
+readme = "README.md"
+requires-python = "==3.11.*"
+dependencies = [
+  "google-genai",
+  "ipykernel",
+  "jupyterlab",
+  "langchain",
+  "langchain-community",
+  "langchain-core",
+  "langchain-google-genai",
+  "langchain-text-splitters",
+  "langgraph",
+  "pypdf",
+  "python-dotenv",
+]
+
+[tool.uv]
+package = false
+python-preference = "managed"

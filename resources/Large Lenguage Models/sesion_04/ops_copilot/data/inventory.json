@@ -1,0 +1,42 @@
+[
+  {
+    "product_id": "auriculares-pro",
+    "name": "Auriculares Pro",
+    "stock": 14,
+    "price_eur": 129.9,
+    "warehouse": "Madrid",
+    "lead_time_days": 2
+  },
+  {
+    "product_id": "teclado-mecanico",
+    "name": "Teclado mecánico",
+    "stock": 0,
+    "price_eur": 89.5,
+    "warehouse": "Barcelona",
+    "lead_time_days": 9
+  },
+  {
+    "product_id": "monitor-27",
+    "name": "Monitor 27 pulgadas",
+    "stock": 6,
+    "price_eur": 249.0,
+    "warehouse": "Valencia",
+    "lead_time_days": 4
+  },
+  {
+    "product_id": "dock-usb-c",
+    "name": "Dock USB-C",
+    "stock": 22,
+    "price_eur": 74.9,
+    "warehouse": "Madrid",
+    "lead_time_days": 2
+  },
+  {
+    "product_id": "webcam-4k",
+    "name": "Webcam 4K",
+    "stock": 5,
+    "price_eur": 119.0,
+    "warehouse": "Lisboa",
+    "lead_time_days": 6
+  }
+]

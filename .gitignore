@@ -1,0 +1,21 @@
+# Credenciales (nunca se versionan)
+.env
+**/.env
+
+# Artefactos grandes de las sesiones que superan el límite de GitHub (100 MB)
+resources/Large Lenguage Models/sesion_01/translator.zip
+
+# Herramientas locales de Claude Code
+.claude/
+
+# Cachés de Python y Jupyter
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Entornos virtuales
+.venv/
+venv/
+
+# Sistema operativo
+.DS_Store

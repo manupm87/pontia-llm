@@ -1,0 +1,20 @@
+[project]
+name = "pontia-sesion-04"
+version = "0.1.0"
+description = "Entorno reproducible para el notebook sesion_04_only_tools.ipynb."
+readme = "README.md"
+requires-python = "==3.11.*"
+dependencies = [
+  "ipykernel",
+  "jsonschema",
+  "jupyterlab",
+  "numpy",
+  "openai",
+  "pandas",
+  "python-dotenv",
+  "requests",
+]
+
+[tool.uv]
+package = false
+python-preference = "managed"

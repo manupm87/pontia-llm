@@ -1,0 +1,9 @@
+ipykernel==6.29.5
+importlib-resources==6.4.5
+jupyterlab==4.2.5
+matplotlib==3.8.4
+numpy==1.26.4
+protobuf==4.25.3
+tensorflow==2.16.2
+tensorflow-datasets==4.9.6
+tensorflow-text==2.16.1
