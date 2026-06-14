@@ -1,10 +1,11 @@
 # Informe final — Asistente turístico conversacional de Tenerife
 
 Trabajo de fin de máster (Pontia LLM). Asistente conversacional que combina
-**RAG** sobre la guía oficial `TENERIFE.pdf` (expuesta como **herramienta**),
+**RAG** sobre la guía oficial `TENERIFE.pdf` (expuesta como **herramienta**, con
+respuestas **ancladas** a los fragmentos recuperados y **fotos** de los lugares),
 **diálogo multiturno** con memoria y una **function call** `get_weather`.
-Stack: **Google Gemini** vía **LangChain**, vector store **FAISS** e interfaz
-web **Streamlit** con respuesta en *streaming*.
+Stack: **Google Gemini** vía **LangChain**, vector store **FAISS**, **PyMuPDF**
+para las imágenes e interfaz web **Streamlit** con respuesta en *streaming*.
 
 ---
 
@@ -42,11 +43,13 @@ es una herramienta más que el modelo usa solo cuando la pregunta lo requiere.
    │   top_k fragmentos   │   │   └► fallback simulado   │
    │   + metadatos cita   │   │                          │
    └──────────┬───────────┘   └────────────┬─────────────┘
-              │ ToolMessage(context)        │ ToolMessage(json)
+              │ ToolMessage(context+imgs)   │ ToolMessage(json)
               └───────────────┬─────────────┘
                               ▼
                   ┌───────────────────────────┐
-                  │ history += ToolMessage(s) │
+                  │ working += ToolMessage(s) │
+                  │ (andamiaje EFÍMERO; no    │
+                  │ persiste en la memoria)   │
                   │ bucle hasta respuesta     │
                   │ final (max_tool_rounds)   │
                   └─────────────┬─────────────┘
@@ -57,7 +60,7 @@ es una herramienta más que el modelo usa solo cuando la pregunta lo requiere.
                   │ páginas de la guía        │
                   └─────────────┬─────────────┘
                                 ▼
-        Respuesta (stream de tokens) + Fuentes citadas (last_sources)
+   Respuesta (stream) + Fuentes (last_sources) + Fotos (last_images)
                                 ▼
                               Usuario
 ```
@@ -70,12 +73,17 @@ es una herramienta más que el modelo usa solo cuando la pregunta lo requiere.
 - `weather.py` — `get_weather`: previsión real de **Open-Meteo** con *fallback*
   determinista y registro en `WEATHER_CALL_LOG`.
 - `rag.py` — `TouristGuideRAG`: carga del PDF, troceado, embeddings Gemini,
-  índice **FAISS** persistente y recuperación con **citas**.
+  índice **FAISS** persistente y recuperación con **citas** e **imágenes** de las
+  páginas recuperadas.
+- `images.py` — `GuideImageStore`: extrae con **PyMuPDF** las fotos embebidas en
+  el PDF, las persiste en `storage/images/` y las indexa por página
+  (`images_for_pages`).
 - `tools.py` — herramientas `@tool` (`search_tourist_guide`, `get_weather`)
   cuyo JSON Schema se deriva de los *type hints* y *docstrings*.
-- `assistant.py` — `TouristAssistant`: memoria, bucle de *tool calling*,
-  `chat` (respuesta completa) y `stream` (tokens), trazas de herramientas.
-- `app.py` — interfaz **Streamlit** con *streaming* y panel de fuentes.
+- `assistant.py` — `TouristAssistant`: memoria, bucle de *tool calling* con
+  andamiaje **efímero** (las herramientas no quedan en la memoria), `chat`
+  (respuesta completa) y `stream` (tokens), trazas de herramientas.
+- `app.py` — interfaz **Streamlit** con *streaming*, panel de fuentes y fotos.
 
 ---
 
@@ -97,6 +105,36 @@ recuperar del PDF sería inútil o ruidoso. Exponiendo la búsqueda como
 y cuándo no, puede **reformular la consulta** de recuperación y **combinar**
 varias herramientas en un mismo turno (p. ej. recomendar una playa *y* dar el
 tiempo de ese día). Es la decisión central del diseño.
+
+### Anclaje al documento (*grounding*) y citas en cada turno
+La primera versión presentaba dos problemas observados en pruebas: el modelo
+**solo citaba fuentes en el primer turno** y tendía a **responder de memoria** en
+las preguntas de seguimiento. La causa era que los mensajes de herramienta (la
+petición y el contexto recuperado) **quedaban en el historial**: en los turnos
+siguientes el modelo reutilizaba ese contexto antiguo —o su conocimiento
+paramétrico— sin volver a invocar la herramienta, de modo que las fuentes (y las
+fotos) no se refrescaban. La solución combina dos medidas:
+
+1. **Andamiaje de herramientas efímero**: el bucle de *tool calling* trabaja sobre
+   una **copia** del historial; en la memoria persistente solo se guardan los
+   turnos de usuario y asistente, no las peticiones ni los resultados de
+   herramientas. Así, al no haber contexto recuperado previo, el modelo **vuelve a
+   consultar la guía en cada pregunta** y refresca fuentes e imágenes.
+2. **Prompt de sistema más estricto**: obliga a usar `search_tourist_guide` para
+   **cualquier** pregunta turística (también de seguimiento) y a responder
+   **únicamente** con los fragmentos recuperados, sin añadir datos de memoria.
+
+Se conserva así el patrón *RAG como herramienta* (el modelo sigue decidiendo,
+reformulando y combinando *tools*) pero con recuperación fiable turno a turno.
+
+### Fotos de la guía (multimodalidad ligera)
+La guía incluye una fotografía por lugar. `GuideImageStore` las extrae con
+**PyMuPDF** (`extract_image`), descarta las pequeñas (decoraciones) por
+`min_image_size` y las mapea por **página** del PDF, derivando un pie de foto del
+texto situado justo encima de cada imagen. Como cada fragmento recuperado lleva su
+`page`, basta cruzar páginas → fotos para mostrar la imagen del lugar recuperado
+junto a la respuesta (hasta `max_images_shown`). Es un enfoque sencillo y robusto:
+no requiere un modelo multimodal y reutiliza la propia recuperación textual.
 
 ### FAISS vs almacenamiento en memoria
 Se elige **FAISS** persistente (`save_local` / `load_local`) frente a un store
@@ -152,11 +190,16 @@ El notebook recorre el ciclo completo de extremo a extremo:
    - Pregunta fuera de la guía → el asistente lo dice y **no inventa**.
 5. **Trazas**: inspección de `tool_log` (`ToolCallRecord`) y `WEATHER_CALL_LOG`.
 
-### Cómo se citan las fuentes
+### Cómo se citan las fuentes y se muestran las fotos
 La recuperación adjunta a cada fragmento su `source_name`, `page` y `chunk_id`.
 `format_context` los inserta como encabezados visibles para el modelo, el
 `SYSTEM_PROMPT` le **obliga a citar la página**, y la interfaz muestra las
 fuentes (`render_sources`) en un desplegable con *snippet* de cada fragmento.
+Además, a partir de la `page` de los fragmentos recuperados se obtienen las
+**fotos** de esas páginas (`GuideImageStore.images_for_pages`), que la interfaz
+muestra con `render_images`. Como el andamiaje de *tool calling* es efímero, la
+guía se consulta **en cada turno** y, por tanto, fuentes y fotos se refrescan
+siempre (no solo en la primera pregunta).
 
 ---
 
@@ -194,6 +237,12 @@ Al no disponer de un *dataset* de referencia anotado, la evaluación es
 - **`top_k` y troceado fijos**: no hay *reranking* ni recuperación adaptativa.
 - **Memoria por recorte simple**: `trim_messages` descarta turnos antiguos sin
   resumirlos, por lo que se pierde contexto lejano en charlas largas.
+- **Fotos asociadas por página**: la imagen se vincula a la página del fragmento,
+  no al lugar concreto. Si una página mezcla varios sitios, puede mostrarse una
+  foto de un lugar contiguo; el pie de foto es una heurística del texto superior.
+- **Coste de recuperar en cada turno**: forzar la consulta a la guía en todos los
+  turnos turísticos mejora el anclaje y las citas, a cambio de una llamada de
+  recuperación adicional por turno.
 - **Sin persistencia de conversación** entre sesiones de servidor.
 
 ---
@@ -204,13 +253,16 @@ Al no disponer de un *dataset* de referencia anotado, la evaluación es
 - *Streaming* real de tokens (`TouristAssistant.stream` + `st.write_stream`).
 - **Despliegue web** con Streamlit (chat, panel de fuentes, parámetros y
   reinicio de conversación).
+- **Anclaje al documento** (*grounding*) con citas y recuperación en cada turno.
+- **Fotos de los lugares** del PDF mostradas junto a la respuesta (`core/images.py`).
 - Observabilidad básica (trazas de herramientas y log de meteorología).
 
 **Pendiente / futuro:**
 - **Agentes multi-herramienta**: ampliar el catálogo (mapas/rutas, eventos,
   reservas) y planificación más sofisticada.
-- **Multimodalidad**: aprovechar Gemini para imágenes (reconocer un lugar de una
-  foto, leer carteles) e ingestar imágenes del PDF.
+- **Multimodalidad avanzada**: aprovechar Gemini para *entender* las imágenes
+  (reconocer un lugar de una foto, leer carteles) y mejorar el emparejamiento
+  foto-lugar más allá de la página.
 - **Observabilidad avanzada**: trazas distribuidas (p. ej. LangSmith), métricas
   de coste/tokens y *dashboards*.
 - **Evaluación automática**: *RAGAS* u otro *framework* con *ground truth*.
@@ -229,6 +281,8 @@ Al no disponer de un *dataset* de referencia anotado, la evaluación es
 | **Embeddings** | `core/rag.py` → `GoogleGenerativeAIEmbeddings(models/gemini-embedding-001)` |
 | **Troceado del documento** | `core/rag.py` → `RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)` |
 | **Citado de fuentes** | `core/rag.py` (`format_context`, `_doc_to_source`, `last_sources`); `app.py` (`render_sources`) |
+| **Anclaje al documento (*grounding*) y citas en cada turno** | `core/assistant.py` → `SYSTEM_PROMPT` + andamiaje efímero en `chat`/`stream`/`_run_tool_rounds` |
+| **Imágenes del PDF mostradas en el chat** | `core/images.py` (`GuideImageStore`); `core/rag.py` (`last_images`); `app.py` (`render_images`) |
 | **Function call `get_weather`** | `core/weather.py` (`get_weather`) + `core/tools.py` (`@tool get_weather`) |
 | **API externa real** | `core/weather.py` → Open-Meteo (`OPEN_METEO_URL`) con *fallback* |
 | **Diálogo multiturno con memoria** | `core/assistant.py` → `self.history`, `_trim_history` |

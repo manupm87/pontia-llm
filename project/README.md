@@ -1,19 +1,24 @@
 # Asistente turístico de Tenerife
 
 Asistente conversacional que ayuda a los turistas a planificar su viaje a
-Tenerife. Responde en español, de forma cercana y práctica, combinando tres
+Tenerife. Responde en español, de forma cercana y práctica, combinando estas
 capacidades:
 
 - **RAG sobre la guía oficial** (`data/TENERIFE.pdf`): recupera información sobre
   playas, rutas, gastronomía, cultura y lugares de interés, citando siempre la
-  página de origen.
+  página de origen y **basándose solo en los fragmentos recuperados** (no en el
+  conocimiento previo del modelo). La guía se consulta **en cada turno**, así que
+  las fuentes se muestran siempre, también en preguntas de seguimiento.
+- **Fotos de los lugares**: extrae las fotografías embebidas en el PDF y muestra
+  las del lugar recuperado junto a la respuesta.
 - **Consulta meteorológica** (`get_weather`): obtiene la previsión del tiempo en
   Tenerife para una fecha concreta a través de la API pública de Open-Meteo.
 - **Diálogo multiturno**: mantiene el contexto de la conversación para resolver
   preguntas encadenadas.
 
 El asistente está construido sobre **Google Gemini** orquestado con
-**LangChain**, y usa un **vector store FAISS** para la búsqueda semántica.
+**LangChain**, usa un **vector store FAISS** para la búsqueda semántica y
+**PyMuPDF** para extraer las imágenes de la guía.
 
 ## Requisitos del enunciado que cubre
 
@@ -27,6 +32,10 @@ El asistente está construido sobre **Google Gemini** orquestado con
 - **Stack Gemini + LangChain** con **FAISS** como vector store.
 - **Citas de fuentes**: cada respuesta basada en el documento incluye nombre de
   archivo, página y fragmento.
+- **Respuestas ancladas al documento (*grounding*)**: el prompt obliga a consultar
+  la guía en cada turno y a responder solo con lo recuperado, evitando que el
+  modelo conteste de memoria.
+- **Multimodalidad de la guía**: las fotos del PDF se muestran junto a la respuesta.
 - **Despliegue**: interfaz web con Streamlit y respuesta en *streaming* real de
   tokens.
 
@@ -49,8 +58,17 @@ Usuario ──▶ TouristAssistant (LangChain + Gemini)
 
 - **RAG como herramienta**: `TouristGuideRAG` (en `core/rag.py`) carga el PDF, lo
   trocea con solapamiento, genera embeddings con Gemini y construye el índice
-  FAISS. La recuperación devuelve el contexto formateado y las fuentes citadas.
-  Se expone al modelo como la herramienta `search_tourist_guide`.
+  FAISS. La recuperación devuelve el contexto formateado, las fuentes citadas y las
+  fotos de las páginas recuperadas. Se expone al modelo como la herramienta
+  `search_tourist_guide`.
+- **Fotos de la guía**: `GuideImageStore` (en `core/images.py`) extrae con
+  **PyMuPDF** las imágenes embebidas en el PDF, las guarda en `storage/images/` y
+  las indexa por página, de modo que el asistente puede mostrar la foto del lugar
+  recuperado en cada respuesta.
+- **Anclaje al documento y citas en cada turno**: el andamiaje de *tool calling*
+  (peticiones y resultados de herramientas) no se guarda en la memoria; solo
+  persisten los turnos de usuario y asistente. Así el modelo vuelve a consultar la
+  guía en cada pregunta, refresca las fuentes y las fotos, y no responde de memoria.
 - **get_weather**: `core/weather.py` consulta Open-Meteo para las coordenadas de
   Tenerife y devuelve temperaturas máxima/mínima y precipitación. Se expone como
   la herramienta `get_weather`, que recibe la fecha en formato `YYYY-MM-DD`.
@@ -73,12 +91,14 @@ project/
 │   ├── config.py              # Settings inmutable y carga desde el entorno
 │   ├── weather.py             # Función externa get_weather (Open-Meteo)
 │   ├── rag.py                 # Indexado del PDF y recuperación con citas
+│   ├── images.py              # Extracción de las fotos del PDF (por página)
 │   ├── tools.py               # Herramientas LangChain (@tool) para el LLM
 │   └── assistant.py           # Asistente conversacional (chat / stream)
 ├── data/
 │   └── TENERIFE.pdf           # Guía oficial usada como fuente del RAG
 ├── storage/
-│   └── faiss_index/           # Índice FAISS (se genera en la primera ejecución)
+│   ├── faiss_index/           # Índice FAISS (se genera en la primera ejecución)
+│   └── images/                # Fotos extraídas del PDF + manifest.json
 ├── notebook_asistente_tenerife.ipynb   # Notebook de demostración
 ├── requirements.txt
 ├── .env.template              # Plantilla de variables de entorno
@@ -147,17 +167,19 @@ Estos parámetros pueden ajustarse mediante variables de entorno (por ejemplo en
 | `MAX_OUTPUT_TOKENS`  | `1024`                         | Límite de tokens de la respuesta     |
 
 El resto de parámetros (tamaño de troceado, solapamiento, `top_k` de
-recuperación, longitud máxima del historial, rutas del PDF y del índice) se
-definen en `core/config.py` mediante la clase `Settings`.
+recuperación, longitud máxima del historial, rutas del PDF y del índice, tamaño
+mínimo de imagen y número máximo de fotos por respuesta) se definen en
+`core/config.py` mediante la clase `Settings`.
 
-## Índice FAISS
+## Índice FAISS e imágenes
 
-El índice vectorial se **construye en la primera ejecución** a partir de
-`data/TENERIFE.pdf` y se persiste en `storage/faiss_index/`. En las ejecuciones
-siguientes se carga directamente desde disco, por lo que el arranque es mucho
-más rápido. Para forzar su reconstrucción (por ejemplo tras actualizar el PDF o
-cambiar el modelo de embeddings), elimina el directorio del índice o invoca
-`build_index(force=True)`.
+El índice vectorial y las **fotos de la guía** se **construyen en la primera
+ejecución** a partir de `data/TENERIFE.pdf` y se persisten en
+`storage/faiss_index/` y `storage/images/` (con un `manifest.json` que las mapea
+por página). En las ejecuciones siguientes se cargan directamente desde disco,
+por lo que el arranque es mucho más rápido. Para forzar su reconstrucción (por
+ejemplo tras actualizar el PDF o cambiar el modelo de embeddings), elimina el
+directorio `storage/` o invoca `build_index(force=True)`.
 
 ## Limitaciones y mejoras futuras
 
@@ -175,6 +197,8 @@ Posibles mejoras:
 - Añadir más documentos y fuentes (eventos, transporte, horarios actualizados).
 - Incorporar *reranking* y evaluación automática de la calidad de la
   recuperación.
+- Asociar las fotos a los lugares por análisis del *layout* (no solo por página) o
+  con pies de foto generados por un modelo multimodal.
 - Resumir el historial antiguo en lugar de recortarlo para conservar contexto.
 - Soporte multilingüe para turistas que no hablen español.
 - Persistencia de conversaciones y caché de respuestas frecuentes.

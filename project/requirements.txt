@@ -14,6 +14,9 @@ google-genai==1.75.0
 pypdf==6.11.0
 faiss-cpu
 
+# Extracción de las fotos embebidas en el PDF (imágenes de los lugares)
+pymupdf==1.27.2.3
+
 # Llamada a función externa (Open-Meteo) y configuración
 requests==2.33.1
 python-dotenv==1.2.2

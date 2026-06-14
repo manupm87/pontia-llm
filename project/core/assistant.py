@@ -35,13 +35,17 @@ SYSTEM_PROMPT = (
     "Eres un asistente turístico experto en la isla de Tenerife. Ayudas a los "
     "turistas a planificar su viaje de forma cercana y útil.\n\n"
     "Reglas:\n"
-    "- Usa la herramienta 'search_tourist_guide' para responder sobre lugares, "
-    "playas, rutas, gastronomía y cultura a partir de la guía oficial de "
-    "Tenerife, y cita siempre la página de la guía cuando uses el documento.\n"
-    "- Usa la herramienta 'get_weather' para informar del tiempo en una fecha "
-    "concreta (formato YYYY-MM-DD).\n"
+    "- Para CUALQUIER pregunta sobre lugares, playas, rutas, miradores, "
+    "gastronomía, cultura o cosas que ver o hacer en Tenerife DEBES llamar "
+    "SIEMPRE a la herramienta 'search_tourist_guide' antes de responder, "
+    "también en las preguntas de seguimiento. No respondas nunca de memoria.\n"
+    "- Basa tu respuesta ÚNICAMENTE en los fragmentos que devuelva la guía y "
+    "cita siempre la página. No uses tu conocimiento previo ni añadas lugares o "
+    "datos que no aparezcan en los fragmentos recuperados.\n"
     "- Si la guía no contiene la respuesta, dilo con claridad y no inventes "
     "información.\n"
+    "- Usa la herramienta 'get_weather' para informar del tiempo en una fecha "
+    "concreta (formato YYYY-MM-DD).\n"
     "- Responde siempre en español, con un tono cercano y práctico."
 )
 
@@ -79,32 +83,36 @@ class TouristAssistant:
         self.tools_by_name = {t.name: t for t in self.tools}
         self.history: list[BaseMessage] = [SystemMessage(content=SYSTEM_PROMPT)]
         self.tool_log: list[ToolCallRecord] = []
-        # Fuentes citadas en la última respuesta (para mostrarlas en Streamlit).
+        # Fuentes y fotos citadas en la última respuesta (para Streamlit).
         self.last_sources: list[dict] = []
+        self.last_images: list[dict] = []
 
-    def _run_tool_rounds(self, max_tool_rounds: int) -> AIMessage | None:
+    def _run_tool_rounds(
+        self, working: list[BaseMessage], max_tool_rounds: int
+    ) -> AIMessage | None:
         """Ejecuta rondas de *tool calling* hasta obtener una respuesta final.
 
-        Invoca el modelo con herramientas; si no pide ninguna, devuelve ese
-        mensaje como respuesta final. Si pide herramientas, las ejecuta, añade
-        sus resultados al historial y repite. Devuelve ``None`` si se agotan
-        las rondas sin respuesta final.
+        Invoca el modelo con herramientas sobre ``working`` (una copia efímera
+        del historial); si no pide ninguna, devuelve ese mensaje como respuesta
+        final. Si pide herramientas, las ejecuta, añade sus resultados a
+        ``working`` y repite. Devuelve ``None`` si se agotan las rondas sin
+        respuesta final.
         """
         for _ in range(max_tool_rounds):
-            ai = self.llm_with_tools.invoke(self.history)
+            ai = self.llm_with_tools.invoke(working)
 
             # Sin llamadas a herramientas: el modelo ya tiene la respuesta.
             if not ai.tool_calls:
                 return ai
 
-            self.history.append(ai)
+            working.append(ai)
             for call in ai.tool_calls:
-                self._execute_tool_call(call)
+                working.append(self._execute_tool_call(call))
 
         return None
 
-    def _execute_tool_call(self, call: dict) -> None:
-        """Ejecuta una herramienta, registra la traza y actualiza el historial."""
+    def _execute_tool_call(self, call: dict) -> ToolMessage:
+        """Ejecuta una herramienta, registra la traza y devuelve su ``ToolMessage``."""
         name = call["name"]
         tool = self.tools_by_name[name]
         start = time.perf_counter()
@@ -128,34 +136,38 @@ class TouristAssistant:
             "Herramienta '%s' ejecutada (ok=%s, %.3fs)", name, ok, elapsed_s
         )
 
-        self.history.append(
-            ToolMessage(content=str(result), tool_call_id=call["id"])
-        )
-
-        # La búsqueda en la guía deja sus fuentes citadas en el RAG.
+        # La búsqueda en la guía deja sus fuentes y fotos citadas en el RAG.
         if name == "search_tourist_guide":
             self.last_sources = list(self.rag.last_sources)
+            self.last_images = list(self.rag.last_images)
+
+        return ToolMessage(content=str(result), tool_call_id=call["id"])
 
     def chat(self, user_message: str, max_tool_rounds: int = 5) -> dict:
-        """Procesa un turno completo y devuelve respuesta, fuentes y trazas."""
+        """Procesa un turno completo y devuelve respuesta, fuentes, fotos y trazas."""
         self.history.append(HumanMessage(content=user_message))
-        # Reinicia el acumulador de fuentes y marca el inicio de las trazas.
+        # Reinicia los acumuladores de fuentes/fotos y marca el inicio de trazas.
         self.last_sources = []
+        self.last_images = []
         tool_log_start = len(self.tool_log)
 
-        final = self._run_tool_rounds(max_tool_rounds)
+        # El andamiaje de *tool calling* (peticiones y resultados de herramientas)
+        # es efímero: se trabaja sobre una copia para no dejarlo en la memoria.
+        working = list(self.history)
+        final = self._run_tool_rounds(working, max_tool_rounds)
         answer = final.content if final else (
             "Lo siento, no he podido completar la respuesta. Inténtalo de nuevo."
         )
 
-        # Asegura que la respuesta final queda en el historial.
-        if final is not None:
-            self.history.append(final)
-
+        # En la memoria solo persiste el turno conversacional (sin herramientas),
+        # de modo que cada nueva pregunta vuelve a consultar la guía y refresca
+        # sus fuentes e imágenes.
+        self.history.append(AIMessage(content=answer))
         self._trim_history()
         return {
             "answer": answer,
             "sources": list(self.last_sources),
+            "images": list(self.last_images),
             "tool_calls": self.tool_log[tool_log_start:],
         }
 
@@ -163,27 +175,30 @@ class TouristAssistant:
         """Resuelve las herramientas y emite la respuesta final token a token."""
         self.history.append(HumanMessage(content=user_message))
         self.last_sources = []
+        self.last_images = []
 
-        # Rondas de herramientas con invocación normal (no se puede stremear
-        # de forma fiable mientras se decide llamar a una tool).
+        # Andamiaje de herramientas sobre una copia efímera del historial (no se
+        # puede stremear de forma fiable mientras se decide llamar a una tool).
+        working = list(self.history)
         for _ in range(max_tool_rounds):
-            ai = self.llm_with_tools.invoke(self.history)
+            ai = self.llm_with_tools.invoke(working)
             if not ai.tool_calls:
                 # Sin herramientas: rompemos y generamos la respuesta final.
                 break
-            self.history.append(ai)
+            working.append(ai)
             for call in ai.tool_calls:
-                self._execute_tool_call(call)
+                working.append(self._execute_tool_call(call))
 
         # Respuesta final en streaming real con el LLM SIN herramientas, para
         # forzar la generación de texto en lugar de nuevas llamadas a tools.
         pieces: list[str] = []
-        for chunk in self.llm.stream(self.history):
+        for chunk in self.llm.stream(working):
             text = chunk.content
             if text:
                 pieces.append(text)
                 yield text
 
+        # Solo el turno conversacional persiste en la memoria (ver ``chat``).
         full_text = "".join(pieces)
         self.history.append(AIMessage(content=full_text))
         self._trim_history()
@@ -192,6 +207,8 @@ class TouristAssistant:
         """Reinicia la conversación dejando solo el prompt de sistema."""
         self.history = [SystemMessage(content=SYSTEM_PROMPT)]
         self.tool_log.clear()
+        self.last_sources = []
+        self.last_images = []
 
     def _trim_history(self) -> None:
         """Recorta el historial para mantener la longitud bajo control."""
