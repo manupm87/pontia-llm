@@ -2,10 +2,14 @@
 
 Tanto la previsión del tiempo (``core.weather``) como el estado del mar
 (``core.sea``) siguen el mismo patrón: validar la fecha, llamar a la API pública
-de Open-Meteo, medir el tiempo, y, ante cualquier fallo de red o parseo, recurrir
-a una simulación determinista de respaldo. Este módulo concentra ese flujo común
-para evitar la duplicación; cada módulo aporta su URL, parámetros, parser y
-simulador.
+de Open-Meteo, medir el tiempo, y, ante un fallo de red o de parseo (los errores
+de ``FALLBACK_ERRORS``), recurrir a una simulación determinista de respaldo. Este
+módulo concentra ese flujo común para evitar la duplicación; cada módulo aporta
+su URL, parámetros, parser y simulador.
+
+Nota: ``requests.get`` se invoca aquí, pero los tests de ``core.weather`` y
+``core.sea`` parchean ``requests.get`` sobre el módulo ``requests`` compartido
+(mismo objeto), por lo que el parcheo es visible desde este módulo.
 """
 
 from __future__ import annotations

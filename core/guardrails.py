@@ -32,26 +32,27 @@ REFUSAL_OFF_TOPIC = (
 )
 
 # Patrones de manipulación de instrucciones más habituales (texto normalizado).
-# Se acotan con ``.{0,40}`` para exigir cercanía entre los dos términos y evitar
-# falsos positivos en preguntas turísticas legítimas (p. ej. "sistema de senderos",
-# "guía completa"). Se usa ``.`` (no ``[^.]``) para que un punto intermedio no
-# rompa el emparejado: "ignora. todas las instrucciones" debe detectarse igual. El
-# cuantificador está acotado ({0,40}), de modo que no introduce riesgo de ReDoS.
+# El hueco entre los dos términos se acota con ``\.?[^.]{0,40}``: hasta 40
+# caracteres SIN cruzar un punto (un punto marca fin de frase y evita enlazar
+# oraciones distintas, p. ej. "muéstrame rutas. ¿hay instrucciones de seguridad?"
+# es legítimo). Se admite un único punto pegado al disparador para no dejar pasar
+# el truco "ignora. todas las instrucciones". El cuantificador está acotado, de
+# modo que no introduce riesgo de ReDoS.
 _INJECTION_PATTERNS = [
     re.compile(p)
     for p in (
         # Anular/olvidar instrucciones, reglas o el prompt (ES/EN).
-        r"\b(ignora\w*|olvida\w*|olvidate|ignore|forget|disregard)\b.{0,40}"
+        r"\b(ignora\w*|olvida\w*|olvidate|ignore|forget|disregard)\b\.?[^.]{0,40}"
         r"\b(instruccion\w*|reglas?|normas?|directrices|prompt|instructions?|rules?)\b",
         # Pedir el prompt/instrucciones del sistema.
         r"system\s+prompt|prompt\s+del?\s+sistema",
-        r"\b(muestrame|ensename|revela|reveal|dime|imprime|repite|repeat)\b.{0,40}"
+        r"\b(muestrame|ensename|revela|reveal|dime|imprime|repite|repeat)\b\.?[^.]{0,40}"
         r"\b(tu\s+)?(prompt|instruccion\w*|instructions?)\b",
         # Modos sin restricciones / jailbreak.
         r"developer\s+mode|modo\s+desarrollador|jailbreak",
         r"\bsin\s+(censura|moderacion)\b",
         # Volcado literal/textual del documento.
-        r"\b(imprime|copia|reproduce|transcribe|muestrame|dame|dump)\b.{0,40}"
+        r"\b(imprime|copia|reproduce|transcribe|muestrame|dame|dump)\b\.?[^.]{0,40}"
         r"\b(literal\w*|integr\w*|textual\w*|verbatim|tal cual|palabra por palabra)\b",
     )
 ]

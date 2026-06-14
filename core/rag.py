@@ -33,6 +33,10 @@ class TouristGuideRAG:
         self.vector_store: FAISS | None = None
         # Almacén de fotos de la guía, indexadas por página.
         self.image_store = GuideImageStore(settings)
+        # Últimas citas recuperadas (acceso secundario para notebook/interfaz;
+        # el asistente usa el artifact por llamada como fuente de verdad).
+        self.last_sources: list[dict] = []
+        self.last_images: list[dict] = []
 
     def build_index(self, force: bool = False) -> None:
         """Construye o carga el índice FAISS (y las imágenes) desde disco.

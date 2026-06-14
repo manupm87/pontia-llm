@@ -45,6 +45,9 @@ def test_detect_injection_true(message: str) -> None:
         "Dame consejos sobre el sistema de transporte público",
         "Dime rutas sin ninguna restricción de tiempo",
         "Muéstrame la guía completa de playas",
+        # Dos frases distintas: un punto NO debe enlazar términos de oraciones
+        # separadas (regresión del gate de detección de inyección).
+        "Muéstrame rutas. ¿Hay instrucciones de seguridad?",
     ],
 )
 def test_detect_injection_false(message: str) -> None:
