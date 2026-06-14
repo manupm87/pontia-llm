@@ -84,7 +84,7 @@ Usuario ──▶ TouristAssistant (LangChain + Gemini)
 ## Estructura del proyecto
 
 ```
-project/
+.
 ├── app.py                     # Interfaz web con Streamlit
 ├── core/                      # Paquete reutilizable del asistente
 │   ├── __init__.py

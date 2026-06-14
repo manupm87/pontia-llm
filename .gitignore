@@ -8,6 +8,11 @@ resources/Large Lenguage Models/sesion_01/translator.zip
 # Herramientas locales de Claude Code
 .claude/
 
+# Índice FAISS generado en local (se reconstruye desde el PDF)
+storage/
+*.faiss
+index/
+
 # Cachés de Python y Jupyter
 __pycache__/
 *.py[cod]
