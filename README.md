@@ -167,7 +167,9 @@ streamlit run app.py
 
 La app ofrece el chat con el asistente, preguntas de ejemplo clicables, respuesta
 en *streaming*, la actividad de las herramientas en vivo, la galería de fotos de
-la guía, el panel de fuentes citadas y la exportación de la conversación.
+la guía, el panel de fuentes citadas y la exportación de la conversación. Desde
+la barra lateral se ajustan **en vivo** los parámetros del modelo (temperatura,
+top-p, tokens), el **streaming** y el **razonamiento (thinking)**.
 
 ## Tests
 

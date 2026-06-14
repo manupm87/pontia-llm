@@ -264,21 +264,26 @@ class TouristAssistant:
         turn = self.prepare(user_message, max_tool_rounds)
         yield from self.stream_answer(turn)
 
+    def answer(self, turn: TurnContext) -> str:
+        """Devuelve la respuesta final (sin streaming) de un turno ya preparado.
+
+        Reutiliza la respuesta del bucle si ya se generó (sin tool calls); solo
+        vuelve a invocar si el bucle terminó pidiendo herramientas. Descarta el
+        razonamiento y persiste solo la respuesta en el historial.
+        """
+        final = turn.final if turn.final is not None else self.llm.invoke(turn.working)
+        text = "".join(t for is_thought, t in _split_content(final) if not is_thought) or (
+            "Lo siento, no he podido completar la respuesta. Inténtalo de nuevo."
+        )
+        self.history.append(AIMessage(content=text))
+        self._trim_history()
+        return text
+
     def chat(self, user_message: str, max_tool_rounds: int = 5) -> dict:
         """Procesa un turno completo y devuelve respuesta, fuentes, fotos y trazas."""
         turn = self.prepare(user_message, max_tool_rounds)
-
-        # Reutiliza la respuesta del bucle si ya se generó (sin tool calls);
-        # solo se vuelve a invocar si el bucle terminó pidiendo herramientas.
-        final = turn.final if turn.final is not None else self.llm.invoke(turn.working)
-        answer = final.content or (
-            "Lo siento, no he podido completar la respuesta. Inténtalo de nuevo."
-        )
-
-        self.history.append(AIMessage(content=answer))
-        self._trim_history()
         return {
-            "answer": answer,
+            "answer": self.answer(turn),
             "sources": list(turn.sources),
             "images": list(turn.images),
             "tool_calls": list(turn.tool_calls),

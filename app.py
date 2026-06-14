@@ -53,14 +53,14 @@ def get_rag(_settings: Settings) -> TouristGuideRAG:
 
 
 def get_assistant(
-    settings: Settings, rag: TouristGuideRAG, params: tuple[float, float, int]
+    settings: Settings, rag: TouristGuideRAG, params: tuple[float, float, int, int]
 ) -> TouristAssistant:
     """Devuelve el asistente, reconstruyéndolo si cambian los parámetros del modelo.
 
     Reconstruir solo el modelo (no el RAG) permite ajustar la generación en vivo
     conservando el historial de la conversación.
     """
-    temperature, top_p, max_tokens = params
+    temperature, top_p, max_tokens, thinking_budget = params
     if (
         "assistant" not in st.session_state
         or st.session_state.get("assistant_params") != params
@@ -70,6 +70,7 @@ def get_assistant(
             temperature=temperature,
             top_p=top_p,
             max_output_tokens=max_tokens,
+            thinking_budget=thinking_budget,
         )
         previous = st.session_state.get("assistant")
         assistant = TouristAssistant(tuned, rag)
@@ -201,8 +202,21 @@ def conversation_markdown(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def render_sidebar(settings: Settings) -> tuple[float, float, int]:
-    """Dibuja la barra lateral (parámetros, acciones, ejemplos) y devuelve los params."""
+# Opciones de razonamiento ("thinking") ofrecidas en la barra lateral.
+_THINKING_OPTIONS = {
+    "Desactivado": 0,
+    "Bajo (512)": 512,
+    "Medio (1024)": 1024,
+    "Alto (4096)": 4096,
+    "Dinámico": -1,
+}
+
+
+def render_sidebar(settings: Settings) -> tuple[float, float, int, int, bool]:
+    """Dibuja la barra lateral (parámetros, acciones, ejemplos) y devuelve la config.
+
+    Devuelve ``(temperature, top_p, max_tokens, thinking_budget, streaming)``.
+    """
     with st.sidebar:
         st.header("⚙️ Parámetros del modelo")
         st.caption(f"Modelo: `{settings.generation_model}`")
@@ -211,6 +225,22 @@ def render_sidebar(settings: Settings) -> tuple[float, float, int]:
         max_tokens = st.slider(
             "Máx. tokens de salida", 256, 4096, settings.max_output_tokens, 128
         )
+
+        st.divider()
+        st.subheader("⚡ Respuesta y razonamiento")
+        streaming = st.toggle("Respuesta en streaming", value=True)
+        labels = list(_THINKING_OPTIONS)
+        default_label = next(
+            (k for k, v in _THINKING_OPTIONS.items() if v == settings.thinking_budget),
+            "Medio (1024)",
+        )
+        thinking_label = st.selectbox(
+            "🧠 Razonamiento (thinking)",
+            labels,
+            index=labels.index(default_label),
+            help="Muestra el razonamiento del modelo en streaming (si lo admite).",
+        )
+        thinking_budget = _THINKING_OPTIONS[thinking_label]
 
         st.divider()
         if st.button("🔄 Reiniciar conversación"):
@@ -233,7 +263,7 @@ def render_sidebar(settings: Settings) -> tuple[float, float, int]:
         st.subheader("💡 Ejemplos")
         render_example_buttons("ex_side")
 
-    return temperature, top_p, max_tokens
+    return temperature, top_p, max_tokens, thinking_budget, streaming
 
 
 def render_history(messages: list[dict]) -> None:
@@ -247,8 +277,8 @@ def render_history(messages: list[dict]) -> None:
             render_images(message.get("images", []))
 
 
-def handle_turn(assistant: TouristAssistant, prompt: str) -> None:
-    """Procesa un turno: muestra la actividad de herramientas y responde en streaming."""
+def handle_turn(assistant: TouristAssistant, prompt: str, streaming: bool) -> None:
+    """Procesa un turno: muestra la actividad de herramientas y la respuesta."""
     st.session_state["messages"].append(
         {"role": "user", "content": prompt, "sources": [], "images": [], "tool_calls": []}
     )
@@ -262,8 +292,14 @@ def handle_turn(assistant: TouristAssistant, prompt: str) -> None:
                 turn = assistant.prepare(prompt)
                 render_tool_activity(turn.tool_calls, status)
                 status.update(label="✅ Datos listos", state="complete", expanded=False)
-            # Fase 2: razonamiento + respuesta en streaming, en el cuerpo del chat.
-            answer, reasoning = stream_with_reasoning(assistant, turn)
+            # Fase 2: razonamiento + respuesta (en streaming o de una vez).
+            if streaming:
+                answer, reasoning = stream_with_reasoning(assistant, turn)
+            else:
+                with st.spinner("✍️ Redactando respuesta…"):
+                    answer = assistant.answer(turn)
+                reasoning = ""
+                st.write(answer)
         except Exception as exc:  # noqa: BLE001 - mostrar el fallo sin romper la app
             st.error(f"No he podido completar la respuesta: {exc}")
             # Deshace el turno a medias para no corromper los siguientes.
@@ -309,8 +345,8 @@ def main() -> None:
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
-    params = render_sidebar(settings)
-    assistant = get_assistant(settings, rag, params)
+    temperature, top_p, max_tokens, thinking_budget, streaming = render_sidebar(settings)
+    assistant = get_assistant(settings, rag, (temperature, top_p, max_tokens, thinking_budget))
 
     render_history(st.session_state["messages"])
 
@@ -325,7 +361,7 @@ def main() -> None:
         render_example_buttons("ex_home", columns=2)
 
     if prompt:
-        handle_turn(assistant, prompt)
+        handle_turn(assistant, prompt, streaming)
 
 
 if __name__ == "__main__":
