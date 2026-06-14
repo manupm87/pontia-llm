@@ -107,8 +107,13 @@ Usuario ──▶ TouristAssistant (LangChain + Gemini)
 │   ├── dates.py               # resolve_date: fechas relativas -> YYYY-MM-DD
 │   ├── rag.py                 # Indexado del PDF y recuperación con citas
 │   ├── images.py              # Extracción de las fotos del PDF (por página)
+│   ├── photo_match.py         # Intercala las fotos donde se mencionan en el texto
 │   ├── tools.py               # Herramientas LangChain (@tool) para el LLM
+│   ├── guardrails.py          # Guardarraíles de entrada (jailbreak) y salida
+│   ├── evaluation.py          # Harness de evaluación (LLM-as-judge) + métricas
 │   └── assistant.py           # Asistente conversacional (chat / stream)
+├── scripts/
+│   └── run_eval.py            # Ejecuta la evaluación y guarda tabla + gráfico
 ├── tests/                     # Suite de tests (pytest)
 ├── data/
 │   └── TENERIFE.pdf           # Guía oficial usada como fuente del RAG
@@ -180,6 +185,38 @@ dependencias pesadas (usa dobles de prueba para el LLM y el RAG):
 ```bash
 python -m pytest
 ```
+
+## Guardarraíles
+
+Capa de validación independiente del prompt (inspirada en la sesión 05):
+
+- **Entrada (siempre activa)**: reglas que detectan intentos de manipulación de
+  instrucciones ("prompt injection"/jailbreak). Si se detecta, el turno se rechaza
+  sin gastar en RAG ni generación.
+- **Avanzados (opcional, desde la barra lateral)**: con un LLM, un clasificador de
+  tema rechaza consultas fuera del ámbito turístico de Tenerife y un juez de
+  fidelidad ("grounding") avisa si la respuesta no se apoya en la guía. Consumen
+  tokens, por eso son opcionales.
+
+## Evaluación
+
+`core/evaluation.py` define un harness con casos (dentro y fuera de ámbito) y
+métricas: acierto de recuperación, fidelidad (LLM-as-judge), tasa de rechazo de lo
+fuera de ámbito y *accuracy* agregada. Para ejecutarlo (requiere `GOOGLE_API_KEY`):
+
+```bash
+python -m scripts.run_eval
+```
+
+Genera `storage/eval_results.csv` y `storage/eval_summary.png` con la tabla y el
+gráfico de métricas.
+
+## Observabilidad y coste
+
+El asistente acumula el uso de tokens (`total_usage`) y la app estima el coste
+aproximado por turno y total (mostrado en la respuesta y en la barra lateral).
+Nota: el modo **streaming** realiza una generación adicional frente al modo de una
+sola pasada; quien quiera minimizar tokens puede desactivar el streaming.
 
 ## Parámetros del modelo configurables por entorno
 

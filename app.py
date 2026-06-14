@@ -16,7 +16,8 @@ import streamlit as st
 
 from core.config import Settings, load_settings
 from core.rag import TouristGuideRAG
-from core.assistant import TouristAssistant, ToolCallRecord
+from core.assistant import TouristAssistant, ToolCallRecord, estimate_cost
+from core.guardrails import Guardrails, build_llm_guardrails
 from core.photo_match import plan_inline_images
 from ui_theme import inject_styles, render_hero
 
@@ -219,10 +220,11 @@ _THINKING_OPTIONS = {
 }
 
 
-def render_sidebar(settings: Settings) -> tuple[float, float, int, int, bool]:
+def render_sidebar(settings: Settings) -> tuple[float, float, int, int, bool, bool]:
     """Dibuja la barra lateral (parámetros, acciones, ejemplos) y devuelve la config.
 
-    Devuelve ``(temperature, top_p, max_tokens, thinking_budget, streaming)``.
+    Devuelve ``(temperature, top_p, max_tokens, thinking_budget, streaming,
+    advanced_guardrails)``.
     """
     with st.sidebar:
         st.header("⚙️ Parámetros del modelo")
@@ -248,6 +250,23 @@ def render_sidebar(settings: Settings) -> tuple[float, float, int, int, bool]:
             help="Muestra el razonamiento del modelo en streaming (si lo admite).",
         )
         thinking_budget = _THINKING_OPTIONS[thinking_label]
+        advanced_guardrails = st.toggle(
+            "🛡️ Guardarraíles avanzados (LLM)",
+            value=False,
+            help="Bloquea consultas fuera de Tenerife y verifica la fidelidad de la respuesta (consume tokens).",
+        )
+
+        # Observabilidad: uso de tokens y coste aproximado acumulados.
+        assistant_state = st.session_state.get("assistant")
+        if assistant_state is not None:
+            usage = assistant_state.total_usage
+            cost = estimate_cost(
+                usage["input_tokens"], usage["output_tokens"], settings.generation_model
+            )
+            st.caption(
+                f"📊 Tokens: {usage['input_tokens']:,} in · "
+                f"{usage['output_tokens']:,} out · ~${cost:.4f}"
+            )
 
         st.divider()
         if st.button("🔄 Reiniciar conversación"):
@@ -270,7 +289,7 @@ def render_sidebar(settings: Settings) -> tuple[float, float, int, int, bool]:
         st.subheader("💡 Ejemplos")
         render_example_buttons("ex_side")
 
-    return temperature, top_p, max_tokens, thinking_budget, streaming
+    return temperature, top_p, max_tokens, thinking_budget, streaming, advanced_guardrails
 
 
 def render_history(messages: list[dict]) -> None:
@@ -281,9 +300,22 @@ def render_history(messages: list[dict]) -> None:
             render_answer_with_images(message["content"], message.get("images", []))
             render_sources(message.get("sources", []))
             render_tools(message.get("tool_calls", []))
+            render_usage(message.get("usage", {}))
 
 
-def handle_turn(assistant: TouristAssistant, prompt: str, streaming: bool) -> None:
+def render_usage(usage: dict) -> None:
+    """Muestra el uso de tokens y el coste aproximado de un turno."""
+    if not usage:
+        return
+    st.caption(
+        f"🔢 {usage['input_tokens']:,} + {usage['output_tokens']:,} tokens "
+        f"· ~${usage['cost']:.4f}"
+    )
+
+
+def handle_turn(
+    assistant: TouristAssistant, prompt: str, streaming: bool, advanced: bool
+) -> None:
     """Procesa un turno: muestra la actividad de herramientas y la respuesta."""
     st.session_state["messages"].append(
         {"role": "user", "content": prompt, "sources": [], "images": [], "tool_calls": []}
@@ -291,6 +323,7 @@ def handle_turn(assistant: TouristAssistant, prompt: str, streaming: bool) -> No
     with st.chat_message("user"):
         st.write(prompt)
 
+    usage_before = dict(assistant.total_usage)
     with st.chat_message("assistant"):
         try:
             # Fase 1: resolución de herramientas, con su actividad en el status.
@@ -313,9 +346,24 @@ def handle_turn(assistant: TouristAssistant, prompt: str, streaming: bool) -> No
             st.session_state["messages"].pop()
             return
 
+        # Guardarraíl de salida (opcional): avisa si la respuesta no se apoya en la guía.
+        if advanced and not turn.blocked and turn.sources:
+            context = "\n\n".join(s.get("snippet", "") for s in turn.sources)
+            if not assistant.guardrails.check_output(answer, context).allowed:
+                st.warning("⚠️ No he podido verificar del todo esta información en la guía oficial.")
+
         tool_calls = records_to_dicts(turn.tool_calls)
         render_sources(turn.sources)
         render_tools(tool_calls)
+
+        usage = {
+            "input_tokens": assistant.total_usage["input_tokens"] - usage_before["input_tokens"],
+            "output_tokens": assistant.total_usage["output_tokens"] - usage_before["output_tokens"],
+        }
+        usage["cost"] = estimate_cost(
+            usage["input_tokens"], usage["output_tokens"], assistant.settings.generation_model
+        )
+        render_usage(usage)
 
     st.session_state["messages"].append(
         {
@@ -325,6 +373,7 @@ def handle_turn(assistant: TouristAssistant, prompt: str, streaming: bool) -> No
             "sources": turn.sources,
             "images": turn.images,
             "tool_calls": tool_calls,
+            "usage": usage,
         }
     )
 
@@ -350,8 +399,10 @@ def main() -> None:
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
-    temperature, top_p, max_tokens, thinking_budget, streaming = render_sidebar(settings)
+    temperature, top_p, max_tokens, thinking_budget, streaming, advanced = render_sidebar(settings)
     assistant = get_assistant(settings, rag, (temperature, top_p, max_tokens, thinking_budget))
+    # Guardarraíles: avanzados (LLM) o solo reglas de entrada, según el modo.
+    assistant.guardrails = build_llm_guardrails(assistant.llm) if advanced else Guardrails()
 
     render_history(st.session_state["messages"])
 
@@ -366,7 +417,7 @@ def main() -> None:
         render_example_buttons("ex_home", columns=2)
 
     if prompt:
-        handle_turn(assistant, prompt, streaming)
+        handle_turn(assistant, prompt, streaming, advanced)
 
 
 if __name__ == "__main__":

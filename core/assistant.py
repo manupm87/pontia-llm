@@ -27,12 +27,27 @@ from langchain_core.messages import (
 )
 
 from .config import Settings
+from .guardrails import Guardrails
 from . import tools as tools_module
 
 if TYPE_CHECKING:  # Solo para anotaciones: no arrastra las dependencias del RAG.
     from .rag import TouristGuideRAG
 
 logger = logging.getLogger("asistente_tenerife.assistant")
+
+# Precio aproximado por millón de tokens (USD): (entrada, salida). Solo para una
+# estimación de coste orientativa en la interfaz.
+_PRICING_PER_1M: dict[str, tuple[float, float]] = {
+    "gemini-2.5-flash-lite": (0.10, 0.40),
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.5-pro": (1.25, 10.0),
+}
+
+
+def estimate_cost(input_tokens: int, output_tokens: int, model: str) -> float:
+    """Estima el coste en USD de un uso de tokens para un modelo dado."""
+    price_in, price_out = _PRICING_PER_1M.get(model, (0.10, 0.40))
+    return (input_tokens * price_in + output_tokens * price_out) / 1_000_000
 
 # Días de la semana en español para anclar la fecha en el prompt de sistema.
 _WEEKDAY_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
@@ -141,18 +156,27 @@ class TurnContext:
     # Respuesta final ya generada durante el bucle (sin tool calls), si la hubo;
     # permite a ``chat`` reutilizarla sin volver a invocar al modelo.
     final: AIMessage | None = None
+    # ``True`` si un guardarraíl de entrada bloqueó el turno (``final`` es el
+    # mensaje de rechazo y no debe llamarse al modelo).
+    blocked: bool = False
 
 
 class TouristAssistant:
     """Asistente conversacional con memoria, RAG y *function calling*."""
 
     def __init__(
-        self, settings: Settings, rag: "TouristGuideRAG", *, llm=None
+        self,
+        settings: Settings,
+        rag: "TouristGuideRAG",
+        *,
+        llm=None,
+        guardrails: Guardrails | None = None,
     ) -> None:
         """Inicializa el LLM con herramientas y arranca el historial.
 
         ``llm`` permite inyectar un modelo ya construido (útil en tests); si es
         ``None`` se crea el modelo de Gemini a partir de la configuración.
+        ``guardrails`` por defecto aplica solo las reglas de entrada (gratis).
         """
         # La herramienta de RAG necesita la instancia compartida del índice.
         tools_module.set_rag_instance(rag)
@@ -160,6 +184,7 @@ class TouristAssistant:
         self.settings = settings
         self.rag = rag
         self.llm = llm if llm is not None else self._build_llm(settings)
+        self.guardrails = guardrails if guardrails is not None else Guardrails()
         self.tools = tools_module.get_tools()
         self.llm_with_tools = self.llm.bind_tools(self.tools)
         self.tools_by_name = {t.name: t for t in self.tools}
@@ -168,6 +193,12 @@ class TouristAssistant:
         # Fuentes y fotos citadas en la última respuesta (para Streamlit).
         self.last_sources: list[dict] = []
         self.last_images: list[dict] = []
+        # Uso acumulado de tokens (observabilidad / coste).
+        self.total_usage: dict[str, int] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
 
     @staticmethod
     def _build_llm(settings: Settings):
@@ -215,10 +246,22 @@ class TouristAssistant:
         self.last_images = []
         log_start = len(self.tool_log)
 
+        # Guardarraíl de entrada: si bloquea, no se gasta en RAG ni generación.
+        verdict = self.guardrails.check_input(user_message)
+        if not verdict.allowed:
+            logger.info("Entrada bloqueada por guardarraíl (%s).", verdict.category)
+            refusal = Guardrails.refusal_for(verdict)
+            return TurnContext(
+                working=list(self.history),
+                final=AIMessage(content=refusal),
+                blocked=True,
+            )
+
         working = list(self.history)
         final: AIMessage | None = None
         for _ in range(max_tool_rounds):
             ai = self.llm_with_tools.invoke(working)
+            self._accumulate_usage(ai)
             if not ai.tool_calls:
                 final = ai  # respuesta lista; se reutiliza en ``chat``
                 break
@@ -234,6 +277,14 @@ class TouristAssistant:
             final=final,
         )
 
+    def _accumulate_usage(self, message) -> None:
+        """Suma el uso de tokens de un mensaje/chunk a ``total_usage`` (si lo trae)."""
+        usage = getattr(message, "usage_metadata", None)
+        if not usage:
+            return
+        for key in self.total_usage:
+            self.total_usage[key] += int(usage.get(key, 0) or 0)
+
     def stream_reasoning_and_answer(
         self, turn: TurnContext
     ) -> Iterator[tuple[bool, str]]:
@@ -243,8 +294,21 @@ class TouristAssistant:
         razonamiento ("thinking" de Gemini) y ``False`` para la respuesta. Solo
         la respuesta (sin el razonamiento) se persiste en el historial.
         """
+        # Turno bloqueado por un guardarraíl: se emite el rechazo sin llamar al LLM.
+        if turn.blocked and turn.final is not None:
+            refusal = turn.final.content
+            yield False, refusal
+            self.history.append(AIMessage(content=refusal))
+            self._trim_history()
+            return
+
+        # Nota: en streaming se genera la respuesta final con ``stream`` (una
+        # generación real, distinta del sondeo de herramientas de ``prepare``).
+        # Es un coste asumido a cambio del streaming real y del razonamiento en
+        # vivo; quien quiera minimizar tokens puede desactivar el streaming.
         answer: list[str] = []
         for chunk in self.llm.stream(turn.working):
+            self._accumulate_usage(chunk)
             for is_thought, text in _split_content(chunk):
                 if not is_thought:
                     answer.append(text)
@@ -275,7 +339,11 @@ class TouristAssistant:
         vuelve a invocar si el bucle terminó pidiendo herramientas. Descarta el
         razonamiento y persiste solo la respuesta en el historial.
         """
-        final = turn.final if turn.final is not None else self.llm.invoke(turn.working)
+        if turn.final is not None:
+            final = turn.final
+        else:
+            final = self.llm.invoke(turn.working)
+            self._accumulate_usage(final)
         text = "".join(t for is_thought, t in _split_content(final) if not is_thought) or (
             "Lo siento, no he podido completar la respuesta. Inténtalo de nuevo."
         )
@@ -349,6 +417,7 @@ class TouristAssistant:
         self.tool_log.clear()
         self.last_sources = []
         self.last_images = []
+        self.total_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     def _trim_history(self) -> None:
         """Recorta el historial para mantener la longitud bajo control."""
