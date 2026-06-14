@@ -1,0 +1,14 @@
+# Tema fijo "claro" del asistente turístico de Tenerife.
+#
+# El diseño visual (CSS de ``ui_theme.py``) usa fondos claros tipo
+# *glassmorphism*. Si no se fija el tema, Streamlit sigue la preferencia del
+# sistema operativo y, en modo oscuro (p. ej. un iPhone con tema oscuro), pone
+# el texto en blanco sobre esos fondos claros y deja de verse. Fijar
+# ``base = "light"`` evita ese cambio automático y mantiene el texto legible.
+[theme]
+base = "light"
+primaryColor = "#0ea5b7"
+backgroundColor = "#f7fbff"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0f2233"
+font = "sans serif"

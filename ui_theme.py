@@ -110,6 +110,31 @@ _CSS = """
    glifos de los iconos Material de Streamlit, que llevan su propia fuente). ---- */
 [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
     font-family: 'Inter', sans-serif;
+    color: var(--ink);
+}
+/* El diseño es de fondo claro: forzamos texto oscuro aunque el dispositivo
+   esté en modo oscuro, para que el texto no quede blanco sobre el "glass"
+   claro (era invisible en iPhone con tema oscuro). Se acota a elementos de
+   texto (no se usa ``*``) para no alterar los glifos de los iconos. */
+[data-testid="stAppViewContainer"] p,
+[data-testid="stAppViewContainer"] li,
+[data-testid="stAppViewContainer"] label,
+[data-testid="stAppViewContainer"] h1,
+[data-testid="stAppViewContainer"] h2,
+[data-testid="stAppViewContainer"] h3,
+[data-testid="stChatMessage"],
+[data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] li,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    color: var(--ink);
+}
+/* El título del hero conserva su degradado recortado (no se sobreescribe). */
+.hero h1 .grad {
+    -webkit-text-fill-color: transparent;
 }
 
 /* ---- Burbujas de chat tipo glass con animación de entrada ---- */
