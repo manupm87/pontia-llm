@@ -17,6 +17,7 @@ import streamlit as st
 from core.config import Settings, load_settings
 from core.rag import TouristGuideRAG
 from core.assistant import TouristAssistant, ToolCallRecord
+from core.photo_match import plan_inline_images
 from ui_theme import inject_styles, render_hero
 
 # Ejemplos de preguntas que se ofrecen al usuario (clicables).
@@ -133,7 +134,12 @@ def stream_with_reasoning(assistant: TouristAssistant, turn) -> tuple[str, str]:
     if reasoning:  # Sustituye el razonamiento "en vivo" por un desplegable.
         with reasoning_slot.container():
             render_reasoning(reasoning)
-    return "".join(answer), reasoning
+
+    # Re-renderiza la respuesta intercalando las fotos en sus menciones.
+    answer_text = "".join(answer)
+    with answer_slot.container():
+        render_answer_with_images(answer_text, turn.images)
+    return answer_text, reasoning
 
 
 def render_sources(sources: list[dict]) -> None:
@@ -151,19 +157,23 @@ def render_sources(sources: list[dict]) -> None:
                 st.markdown("> " + text.replace("\n", "\n> "))
 
 
-def render_images(images: list[dict]) -> None:
-    """Muestra las fotos de los lugares recuperados, en línea con la respuesta."""
-    if not images:
-        return
-    # Solo se muestran las fotos cuyo archivo sigue existiendo en disco.
-    available = [img for img in images if Path(img.get("path", "")).is_file()]
-    if not available:
-        return
-    columns = st.columns(min(len(available), 3))
-    for index, img in enumerate(available):
-        caption = img.get("caption") or ""
+def render_gallery(images: list[dict]) -> None:
+    """Renderiza un conjunto de fotos en columnas."""
+    columns = st.columns(min(len(images), 3))
+    for index, img in enumerate(images):
         with columns[index % len(columns)]:
-            st.image(img["path"], caption=caption, use_container_width=True)
+            st.image(img["path"], caption=img.get("caption") or "", use_container_width=True)
+
+
+def render_answer_with_images(text: str, images: list[dict]) -> None:
+    """Muestra la respuesta intercalando cada foto donde se menciona su lugar."""
+    available = [img for img in images if Path(img.get("path", "")).is_file()]
+    for kind, payload in plan_inline_images(text, available):
+        if kind == "text":
+            if payload.strip():
+                st.markdown(payload)
+        else:
+            render_gallery(payload)
 
 
 def render_example_buttons(prefix: str, columns: int = 1) -> None:
@@ -268,8 +278,7 @@ def render_history(messages: list[dict]) -> None:
     for message in messages:
         with st.chat_message(message["role"]):
             render_reasoning(message.get("reasoning", ""))
-            st.write(message["content"])
-            render_images(message.get("images", []))
+            render_answer_with_images(message["content"], message.get("images", []))
             render_sources(message.get("sources", []))
             render_tools(message.get("tool_calls", []))
 
@@ -296,7 +305,7 @@ def handle_turn(assistant: TouristAssistant, prompt: str, streaming: bool) -> No
                 with st.spinner("✍️ Redactando respuesta…"):
                     answer = assistant.answer(turn)
                 reasoning = ""
-                st.write(answer)
+                render_answer_with_images(answer, turn.images)
         except Exception as exc:  # noqa: BLE001 - mostrar el fallo sin romper la app
             st.error(f"No he podido completar la respuesta: {exc}")
             # Deshace el turno a medias para no corromper los siguientes.
@@ -305,7 +314,6 @@ def handle_turn(assistant: TouristAssistant, prompt: str, streaming: bool) -> No
             return
 
         tool_calls = records_to_dicts(turn.tool_calls)
-        render_images(turn.images)
         render_sources(turn.sources)
         render_tools(tool_calls)
 
