@@ -65,6 +65,8 @@ def build_system_prompt(today: date | None = None) -> str:
         "(YYYY-MM-DD) y pásala a 'get_weather' o 'get_sea_conditions'.\n"
         "- Usa 'get_weather' para la previsión meteorológica y 'get_sea_conditions' "
         "para el estado del mar (oleaje, baño, surf) en una fecha concreta.\n"
+        "- Razona y piensa SIEMPRE en español: tanto tu razonamiento interno "
+        "como la respuesta final deben estar en español.\n"
         "- Responde siempre en español, con un tono cercano y práctico."
     )
 
