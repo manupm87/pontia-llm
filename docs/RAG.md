@@ -245,6 +245,63 @@ resultantes son los que se entregan al LLM como contexto.
 - **Reconstrucción**: cambiar de modelo de *embeddings* o de parámetros de
   troceado obliga a regenerar el índice.
 
+### 4.6. Embeddings locales frente a embeddings vía API (lo que se vio en los notebooks)
+
+El proyecto genera los *embeddings* llamando a un modelo alojado de Google
+(`gemini-embedding-001`). No es la única forma: en los notebooks del máster
+(`resources/Large Lenguage Models/`) aparecen **otros mecanismos para producir
+embeddings de forma local**, sin depender de la API de Gemini. Conviene
+contrastarlos para entender por qué aquí se eligió la vía API.
+
+**Lo que muestran los notebooks:**
+
+- **Sesión 01 (`sesion_01/Transformer.ipynb`)**: construye un *Transformer*
+  desde cero y genera los *embeddings* **en local**, con una capa entrenable
+  `tf.keras.layers.Embedding(vocab_size, d_model)` sumada a una **codificación
+  posicional** (`positional_encoding`). Aquí los vectores no vienen de ningún
+  servicio externo: se aprenden como parte del modelo durante el entrenamiento.
+- **Sesión 03 (`sesion_03/sesion_03.ipynb`)**: el notebook de RAG ya usa
+  `GoogleGenerativeAIEmbeddings` (Gemini) con `InMemoryVectorStore`, es decir, el
+  **mismo enfoque por API** que adopta este proyecto.
+
+**Matiz clave — no son lo mismo.** Los *embeddings* locales de la sesión 01 son
+**embeddings de token** aprendidos para una tarea concreta (traducción): su
+trabajo es alimentar las capas de atención del propio Transformer, no medir la
+similitud semántica entre dos textos cualesquiera. Los *embeddings* de
+`gemini-embedding-001` son **embeddings de frase/documento**: un modelo ya
+preentrenado y optimizado para que la **distancia** entre vectores refleje la
+**cercanía de significado**, que es justo lo que necesita la búsqueda del RAG.
+Dicho de otro modo: la sesión 01 enseña *cómo nace un embedding por dentro*; el
+RAG necesita un embedding *ya entrenado para buscar*.
+
+**Alternativas locales reales para un RAG.** Si se quisiera evitar la API, la
+opción equivalente no sería la capa de la sesión 01, sino un modelo de
+*embeddings de frase* preentrenado que corra en la propia máquina —por ejemplo
+`sentence-transformers`/`HuggingFaceEmbeddings` (modelos tipo `all-MiniLM`)— o,
+en su versión más simple y clásica, una representación dispersa tipo **TF-IDF**
+(coincidencia léxica, sin semántica).
+
+**Por qué este proyecto usa la API y no embeddings locales:**
+
+- **Coherencia de proveedor**: la generación ya es Gemini; usar embeddings de
+  Gemini mantiene un solo proveedor y una sola clave (criterio explicitado en el
+  notebook del proyecto).
+- **Calidad sin entrenar nada**: el modelo está preentrenado y es multilingüe;
+  funciona bien en español desde el primer momento, sin recolectar datos ni
+  entrenar una capa propia (lo que sí exigiría el enfoque de la sesión 01).
+- **Simplicidad operativa**: no hay que descargar pesos, gestionar GPU/CPU ni
+  fijar versiones de un modelo local; basta una llamada de red.
+- **Escala adecuada**: para una sola guía, el coste de embeber por API es
+  mínimo y ocurre **una sola vez** al construir el índice.
+
+**Cuándo tendría sentido lo local**: privacidad estricta (que el texto no salga
+de la máquina), funcionamiento sin conexión, evitar costes/cuotas de API o
+necesitar control total sobre el modelo. En esos casos, cambiar a un *embedder*
+local es directo —basta sustituir `GoogleGenerativeAIEmbeddings` por el
+*embedder* elegido en `TouristGuideRAG.__init__`— **reconstruyendo el índice**
+(`force=True`), ya que vectores de modelos distintos no son comparables
+(sección 4.3).
+
 ---
 
 ## 5. Resumen del flujo
