@@ -145,7 +145,10 @@ _CSS = """
     border-radius: 18px;
     padding: 0.5rem 0.9rem;
     box-shadow: var(--shadow);
-    backdrop-filter: blur(10px);
+    /* Sin backdrop-filter a propósito: establece un bloque contenedor que
+       rompería el overlay a pantalla completa de las fotos (botón de ampliar),
+       haciéndolas renderizarse mal dentro de la burbuja en vez de a pantalla
+       completa. El fondo translúcido + borde + sombra mantienen el look glass. */
     animation: rise 0.4s cubic-bezier(.2,.8,.2,1) both;
 }
 [data-testid="stChatMessage"]::before {
