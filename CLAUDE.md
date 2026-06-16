@@ -4,7 +4,7 @@ Guidance for Claude agents working in this repository.
 
 ## Project overview
 
-Conversational tourist assistant for Tenerife (master's final project). It combines:
+Conversational tourist assistant for Tenerife (LLM module final project). It combines:
 
 - **RAG-as-a-tool** over `data/TENERIFE.pdf`: the retrieval pipeline is exposed to
   the LLM as a callable tool (`search_tourist_guide`), not hardwired into the prompt.
@@ -27,7 +27,7 @@ Conversational tourist assistant for Tenerife (master's final project). It combi
 - **Observability**: per-turn and cumulative token usage + estimated cost.
 
 Stack: **Google Gemini via LangChain**, **FAISS** vector store, **PyMuPDF** for image
-extraction, **Streamlit** UI and a Jupyter notebook for the master deliverable.
+extraction, **Streamlit** UI and a Jupyter notebook for the module deliverable.
 Tests live in `tests/` and run with `python -m pytest` (no network/heavy deps:
 the LLM and RAG are faked).
 
@@ -60,6 +60,9 @@ The reusable package lives in `core/`:
 - `core/weather.py` — `get_weather` (Open-Meteo + simulated fallback), `WeatherError`.
 - `core/sea.py` — `get_sea_conditions` (Open-Meteo Marine + simulated fallback),
   `SeaError`; mirrors `weather.py`.
+- `core/meteo.py` — `fetch_with_fallback`: shared Open-Meteo flow for
+  `weather.py`/`sea.py` (validate date, call API, time it, log, fall back to the
+  simulator); `FALLBACK_ERRORS`.
 - `core/dates.py` — `resolve_date`: relative Spanish expressions ("mañana", "este
   finde", "el lunes que viene", "en 3 días") → ISO `YYYY-MM-DD`.
 - `core/tools.py` — wraps RAG/weather/sea/date as LangChain tools:
@@ -69,7 +72,9 @@ The reusable package lives in `core/`:
   optional LLM topic classifier; output: optional LLM grounding judge),
   `GuardVerdict`, `build_llm_guardrails`, refusal messages.
 - `core/photo_match.py` — pure logic that interleaves photos at their mention:
-  `plan_inline_images`, `place_tokens`, `normalize_text`.
+  `plan_inline_images`, `place_tokens` (re-exports `normalize_text`).
+- `core/text.py` — `normalize_text`: shared text normalization (strip accents,
+  lowercase, collapse spaces) used by guardrails/dates/evaluation/photo_match.
 - `core/evaluation.py` — eval harness: `EvalCase`, `EvalResult`, `run_evaluation`,
   `is_refusal`, `retrieval_hit`, `score_correct`, `summarize`, `to_dataframe`,
   `plot_summary`, `default_dataset` (pandas/matplotlib are lazy-imported).
@@ -85,7 +90,7 @@ The reusable package lives in `core/`:
 - `ui_theme.py` — dynamic CSS theme + animated hero (`inject_styles`, `render_hero`).
 - `scripts/run_eval.py` — runs the evaluation end to end and writes a CSV + PNG report.
 - `tests/` — pytest suite for the pure/orchestration logic (LLM and RAG faked).
-- Jupyter notebook — the master deliverable that walks through the pipeline end to end.
+- Jupyter notebook — the module deliverable that walks through the pipeline end to end.
 
 ## How to run
 
@@ -110,7 +115,7 @@ jupyter lab            # notebook deliverable
 
 ## Key conventions
 
-Mirror the master's session style (`resources/Large Lenguage Models/` if in doubt):
+Mirror the LLM module's session style (`resources/Large Lenguage Models/` if in doubt):
 
 - First line of every `.py`: `from __future__ import annotations`.
 - Modern type hints with `|` (`str | None`), never `Optional`.

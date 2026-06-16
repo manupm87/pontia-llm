@@ -248,7 +248,7 @@ resultantes son los que se entregan al LLM como contexto.
 ### 4.6. Embeddings locales frente a embeddings vía API (lo que se vio en los notebooks)
 
 El proyecto genera los *embeddings* llamando a un modelo alojado de Google
-(`gemini-embedding-001`). No es la única forma: en los notebooks del máster
+(`gemini-embedding-001`). No es la única forma: en los notebooks del módulo
 (`resources/Large Lenguage Models/`) aparecen **otros mecanismos para producir
 embeddings de forma local**, sin depender de la API de Gemini. Conviene
 contrastarlos para entender por qué aquí se eligió la vía API.

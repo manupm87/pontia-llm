@@ -1,6 +1,6 @@
 """Evaluación del asistente: recuperación, fidelidad, selección y rechazos.
 
-Inspirado en las sesiones 04/06 del máster (evaluación en varios niveles y
+Inspirado en las sesiones 04/06 del módulo (evaluación en varios niveles y
 LLM-as-judge). Define un conjunto de casos, ejecuta el asistente y calcula
 métricas:
 

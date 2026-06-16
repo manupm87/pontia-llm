@@ -1,6 +1,6 @@
 """Guardarraíles de entrada y salida para el asistente (defensa en profundidad).
 
-Inspirado en la sesión 05 del máster (input/output guardrails). Añade una capa
+Inspirado en la sesión 05 del módulo (input/output guardrails). Añade una capa
 de validación independiente del prompt:
 
 - Entrada: detección de intentos de manipulación ("prompt injection"/jailbreak)

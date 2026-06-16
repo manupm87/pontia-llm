@@ -1,8 +1,6 @@
 # Workflow de CI para la suite de tests.
-# NOTA: mueve este archivo a .github/workflows/tests.yml para activarlo (aquí
-# vive en ci/ porque la credencial de la sesión no tiene el scope `workflow`).
 #
-# Ejecuta la suite de tests en cada push y pull request.
+# Ejecuta la suite de tests en cada push a main y en cada pull request.
 # La suite no necesita red ni la clave de API: el LLM y el RAG se simulan.
 name: tests
 
