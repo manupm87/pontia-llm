@@ -33,12 +33,11 @@ como vector store y **PyMuPDF** para extraer las imágenes de la guía.
 > **<https://pontia-llm-zrvfwbe9t6m28chhrn6cms.streamlit.app/>** (Streamlit
 > Community Cloud) — necesita una `GOOGLE_API_KEY` válida configurada en la app.
 >
-> 📄 **¿Cómo está diseñado por dentro?** La arquitectura, las decisiones técnicas,
-> la evaluación y la trazabilidad de los requisitos del enunciado están en
-> **[INFORME.md](INFORME.md)**.
+> 📄 **¿Cómo está diseñado por dentro?** La arquitectura, las decisiones técnicas
+> y la evaluación están en **[INFORME.md](INFORME.md)**.
 >
 > 📓 **¿Lo quieres ver en acción paso a paso?** El **[notebook de
-> demostración](notebook_asistente_tenerife.ipynb)** recorre todas las capacidades
+> demostración](notebooks/notebook_asistente_tenerife.ipynb)** recorre todas las capacidades
 > de principio a fin (ver [cómo ejecutarlo](#cómo-ejecutarlo)).
 
 ## Instalación
@@ -83,7 +82,7 @@ y su comando equivalente:
 | Tarea                          | Con Make        | Comando directo                              |
 |--------------------------------|-----------------|----------------------------------------------|
 | Aplicación web (Streamlit)     | `make run`      | `streamlit run app.py`                       |
-| Notebook de demostración       | `make notebook` | `jupyter lab notebook_asistente_tenerife.ipynb` |
+| Notebook de demostración       | `make notebook` | `jupyter lab notebooks/notebook_asistente_tenerife.ipynb` |
 | Tests                          | `make test`     | `python -m pytest`                           |
 | Evaluación (genera CSV + PNG)  | `make eval`     | `python -m scripts.run_eval`                 |
 
@@ -94,7 +93,7 @@ y su comando equivalente:
   el panel de fuentes y la exportación de la conversación. Desde la barra lateral
   se ajustan **en vivo** los parámetros del modelo, el *streaming*, el razonamiento
   y los guardarraíles avanzados.
-- El **[notebook de demostración](notebook_asistente_tenerife.ipynb)** recorre cada
+- El **[notebook de demostración](notebooks/notebook_asistente_tenerife.ipynb)** recorre cada
   capacidad en orden natural (13 secciones): indexado y recuperación con citas,
   fotos e intercalado, las funciones externas (tiempo, mar y fechas), el asistente
   multiturno, *streaming* y razonamiento, guardarraíles, evaluación
@@ -141,7 +140,7 @@ cambiar el modelo de embeddings), elimina el directorio `storage/` o invoca
 ├── tests/                     # Suite de tests (pytest)
 ├── data/TENERIFE.pdf          # Guía oficial usada como fuente del RAG
 ├── storage/                   # Índice FAISS + fotos (generado, gitignored)
-├── notebook_asistente_tenerife.ipynb   # Notebook de demostración
+├── notebooks/                  # Notebook de demostración (entregable)
 ├── Makefile                   # Atajos: setup / run / test / eval / notebook
 └── requirements.txt
 ```

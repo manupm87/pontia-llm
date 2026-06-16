@@ -246,8 +246,8 @@ modo que **siempre se conserva el `SystemMessage`** y los turnos más recientes.
 ## 3. Resultados
 
 ### Qué demuestra el notebook
-El **[notebook de demostración](notebook_asistente_tenerife.ipynb)**
-(`notebook_asistente_tenerife.ipynb`) recorre el ciclo completo de extremo a
+El **[notebook de demostración](notebooks/notebook_asistente_tenerife.ipynb)**
+(`notebooks/notebook_asistente_tenerife.ipynb`) recorre el ciclo completo de extremo a
 extremo, con una sección por cada capacidad en orden natural del pipeline:
 
 1. **Indexado**: construcción del índice FAISS desde `TENERIFE.pdf` y prueba de
@@ -371,33 +371,3 @@ por herramienta vía `ToolCallRecord` y los *call logs*.
 - **Memoria con resumen** y persistencia de conversaciones.
 - **Recuperación mejorada**: *reranking*, *hybrid search* y `top_k` adaptativo.
 - **Soporte multilingüe** para turistas que no hablen español.
-
----
-
-## 7. Trazabilidad: requisitos mínimos → dónde se cumplen
-
-| Requisito mínimo del enunciado | Dónde se cumple |
-|---|---|
-| **RAG sobre `TENERIFE.pdf`** | `core/rag.py` (`TouristGuideRAG.build_index`, `search`, `retrieve`); PDF en `data/TENERIFE.pdf` |
-| **PDF expuesto como HERRAMIENTA** | `core/tools.py` → `@tool search_tourist_guide` |
-| **Vector store FAISS** | `core/rag.py` (`FAISS.from_documents`, `save_local`/`load_local`); índice en `storage/faiss_index` |
-| **Embeddings** | `core/rag.py` → `GoogleGenerativeAIEmbeddings(models/gemini-embedding-001)` |
-| **Troceado del documento** | `core/rag.py` → `RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)` |
-| **Citado de fuentes** | `core/rag.py` (`format_context`, `_doc_to_source`); citas por llamada en el *artifact* de la herramienta; `app.py` (`render_sources`) |
-| **Anclaje al documento (*grounding*) y citas en cada turno** | `core/assistant.py` → `SYSTEM_PROMPT` + andamiaje efímero en `prepare`/`chat`/`stream` |
-| **Imágenes del PDF mostradas (intercaladas) en el chat** | `core/images.py` (`GuideImageStore`); `core/photo_match.py` (`plan_inline_images`); `app.py` (`render_images`) |
-| **Function call `get_weather`** | `core/weather.py` (`get_weather`) + `core/tools.py` (`@tool get_weather`) |
-| **Function call `get_sea_conditions`** | `core/sea.py` (`get_sea_conditions`) + `core/tools.py` (`@tool get_sea_conditions`) |
-| **Function call `resolve_date`** | `core/dates.py` (`resolve_date`) + `core/tools.py` (`@tool resolve_date`) |
-| **API externa real** | `core/weather.py` / `core/sea.py` → Open-Meteo (`meteo.fetch_with_fallback`) con *fallback* |
-| **Diálogo multiturno con memoria** | `core/assistant.py` → `self.history`, `_trim_history` |
-| **Tool calling con Gemini + LangChain** | `core/assistant.py` → `init_chat_model` + `bind_tools` + bucle en `prepare`/`_execute_tool_call` |
-| **Prompt de sistema (rol del asistente)** | `core/assistant.py` → `build_system_prompt` (español, anclado a la fecha) |
-| **Guardarraíles (entrada/salida)** | `core/guardrails.py` (`Guardrails`, `detect_injection`, `build_llm_guardrails`); barra lateral en `app.py` |
-| **Configuración por entorno** | `core/config.py` → `Settings`, `load_settings`, `.env` |
-| **Notebook de demostración** | [`notebook_asistente_tenerife.ipynb`](notebook_asistente_tenerife.ipynb) (13 secciones: indexado, fotos, herramientas, diálogo, streaming, guardarraíles, evaluación, observabilidad) |
-| **Control de parámetros del modelo** | `core/config.py` (`temperature`, `top_p`, `max_output_tokens`, `thinking_budget`); panel en `app.py` |
-| **Bonus: streaming + razonamiento** | `core/assistant.py` → `stream`/`stream_reasoning_and_answer`; `app.py` → `st.write_stream` |
-| **Bonus: despliegue web** | `app.py` + `ui_theme.py` (Streamlit); desplegado en vivo: <https://pontia-llm-zrvfwbe9t6m28chhrn6cms.streamlit.app/> |
-| **Bonus: evaluación** | `core/evaluation.py` (`run_evaluation`, `summarize`); `scripts/run_eval.py` |
-| **Observabilidad** | `ToolCallRecord` / `tool_log` (`assistant.py`), `WEATHER_CALL_LOG` (`weather.py`), `SEA_CALL_LOG` (`sea.py`), `total_usage` + `estimate_cost` |

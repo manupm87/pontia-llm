@@ -6,7 +6,7 @@ BIN := $(VENV)/bin
 PYTHON_BIN := $(BIN)/python
 PIP := $(PYTHON_BIN) -m pip
 STREAMLIT := $(PYTHON_BIN) -m streamlit
-NOTEBOOK := notebook_asistente_tenerife.ipynb
+NOTEBOOK := notebooks/notebook_asistente_tenerife.ipynb
 
 .PHONY: help setup sync check run test eval notebook clean
 
